@@ -7,13 +7,13 @@
 ## Steps to manually test
 <!-- Text here is not always necessary but it is generally recommended in order to aid a reviewer.
 eg.
-1. Ensure the project is installed:
-```
-pipenv sync --dev
-```
-2. Activate the virtual env and enter the pipenv shell:
+1. Activate the virtual env and enter the pipenv shell:
 ```
 pipenv shell
+```
+2. Ensure the project is installed:
+```
+pipenv sync --dev
 ```
 3. Run the spider:
 ```
