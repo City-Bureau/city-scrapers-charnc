@@ -1,4 +1,4 @@
-# City Scrapers Kansas City
+# City Scrapers Charlotte City
 
 [![CI build status](https://github.com/City-Bureau/city-scrapers-kancit/workflows/CI/badge.svg)](https://github.com/City-Bureau/city-scrapers-kancit/actions?query=workflow%3ACI)
 [![Cron build status](https://github.com/City-Bureau/city-scrapers-kancit/workflows/Cron/badge.svg)](https://github.com/City-Bureau/city-scrapers-kancit/actions?query=workflow%3ACron)
