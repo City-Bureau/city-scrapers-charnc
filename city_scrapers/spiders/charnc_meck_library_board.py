@@ -62,7 +62,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 start=start,
                 end=end,
                 all_day=False,
-                time_notes="",
+                time_notes="For more accurate meeting location, please refer to the meeting attachments.",
                 location=location,
                 links=self._parse_links(p),
                 source=response.url,
@@ -226,6 +226,13 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             address = location_text[match.start() + 1:].strip()
             return {"name": name, "address": address}
         
+        # Hardcode address for Library Administration Center
+        if "library administration center" in location_text.lower():
+            return {
+                "name": "Library Administration Center",
+                "address": "510 Stitt Road, Charlotte, NC 28213"
+            }
+        
         # No address found, return as name only
         return {"name": location_text, "address": ""}
 
@@ -306,7 +313,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 break
             for a in candidate.css("a"):
                 href = a.attrib.get("href", "").strip()
-                if not href or "email-protection" in href or "cdn-cgi" in href:
+                if not href:
                     continue
                 text = " ".join(a.css("::text").getall()).strip().strip("\xa0").strip()
                 if "agenda" in text.lower():

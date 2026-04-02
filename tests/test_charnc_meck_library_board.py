@@ -50,7 +50,7 @@ def test_end():
 
 
 def test_time_notes():
-    assert parsed_items[0]["time_notes"] == ""
+    assert parsed_items[0]["time_notes"] == "For more accurate meeting location, please refer to the meeting attachments."
 
 
 def test_id():
