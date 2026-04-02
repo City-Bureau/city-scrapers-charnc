@@ -86,7 +86,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         for raw in p_texts[1:]:
             stripped = re.sub(r"\s+", " ", raw.strip().strip("\xa0")).strip()
             if stripped and stripped != location_name:
-                parts.append(stripped)
+                # Skip if this looks like a location with address
+                if not self._is_location_string(stripped, location_name):
+                    parts.append(stripped)
 
         # Sibling paragraphs: non-location, non-agenda/minutes-only content
         for i in range(1, 5):
@@ -113,6 +115,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 continue
             if location_name and sib_clean == location_name:
                 continue
+            # Skip if this looks like a location with address
+            if self._is_location_string(sib_clean, location_name):
+                continue
             direct = re.sub(
                 r"\s+",
                 " ",
@@ -135,6 +140,28 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             parts.append(sib_clean)
 
         return " ".join(part for part in parts if part)
+    
+    def _is_location_string(self, text, location_name):
+        """Check if text is a location string that should be excluded from description."""
+        if not text:
+            return False
+        
+        # Check if it matches the location name
+        if location_name and text == location_name:
+            return True
+        
+        # Check if it starts with the location name followed by address info
+        if location_name and text.startswith(location_name):
+            # Check if there's a comma followed by address-like content
+            remainder = text[len(location_name):].strip()
+            if remainder.startswith(",") and re.search(r"\d+\s+\w+", remainder):
+                return True
+        
+        # Check if it's just a library name followed by "Agenda Minutes"
+        if re.match(r"^[\w\s:&-]+\s+(Library|Center)\s+Agenda\s+Minutes$", text):
+            return True
+        
+        return False
 
     def _get_raw_title(self, p):
         texts = [
