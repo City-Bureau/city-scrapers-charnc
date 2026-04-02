@@ -27,6 +27,21 @@ DT_RE = re.compile(
 )
 
 
+def decode_cloudflare_email(encoded):
+    """Decode Cloudflare-protected email from data-cfemail attribute."""
+    if not encoded:
+        return ""
+    try:
+        key = int(encoded[:2], 16)
+        decoded = "".join(
+            chr(int(encoded[i:i+2], 16) ^ key)
+            for i in range(2, len(encoded), 2)
+        )
+        return decoded
+    except (ValueError, IndexError):
+        return ""
+
+
 class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     name = "charnc_meck_library_board"
     agency = "Charlotte Mecklenburg Library"
@@ -81,14 +96,29 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     def _parse_description(self, p, location_name=""):
         parts = []
 
-        # Inline: text nodes after title in same paragraph
+        # Extract text with emails from the main paragraph
+        main_text = self._extract_text_with_emails(p)
+        
+        # Remove the strong text (date/time and title) from main_text
+        strong_text = re.sub(
+            r"[\s\xa0]+",
+            " ",
+            " ".join(p.css("strong::text").getall()).strip(),
+        )
+        if strong_text and main_text.startswith(strong_text):
+            main_text = main_text[len(strong_text):].strip()
+        
+        # Also remove the raw title if present
         p_texts = p.xpath("./text()").getall()
-        for raw in p_texts[1:]:
-            stripped = re.sub(r"\s+", " ", raw.strip().strip("\xa0")).strip()
-            if stripped and stripped != location_name:
-                # Skip if this looks like a location with address
-                if not self._is_location_string(stripped, location_name):
-                    parts.append(stripped)
+        if p_texts:
+            title_text = p_texts[0].strip().strip("\xa0")
+            if title_text and main_text.startswith(title_text):
+                main_text = main_text[len(title_text):].strip()
+        
+        # Add remaining text if it's not a location
+        if main_text and main_text != location_name:
+            if not self._is_location_string(main_text, location_name):
+                parts.append(main_text)
 
         # Sibling paragraphs: non-location, non-agenda/minutes-only content
         for i in range(1, 5):
@@ -97,20 +127,11 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 break
             if sib.css("strong"):
                 break
-            sib_texts = sib.css("::text").getall()
-            sib_clean = re.sub(
-                r"\s+",
-                " ",
-                re.sub(
-                    r"^Location:\s*",
-                    "",
-                    " ".join(
-                        t.strip()
-                        for t in sib_texts
-                        if t.strip() and t.strip() != "\xa0"
-                    ),
-                ),
-            ).strip()
+            
+            # Extract text with decoded emails
+            sib_clean = self._extract_text_with_emails(sib)
+            sib_clean = re.sub(r"^Location:\s*", "", sib_clean).strip()
+            
             if not sib_clean:
                 continue
             if location_name and sib_clean == location_name:
@@ -140,6 +161,37 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             parts.append(sib_clean)
 
         return " ".join(part for part in parts if part)
+    
+    def _extract_text_with_emails(self, selector):
+        """Extract text from selector, decoding Cloudflare-protected emails."""
+        result = []
+        
+        # Process all child nodes in order
+        for child in selector.xpath("./node()"):
+            if isinstance(child.root, str):
+                # Text node
+                text = child.root.strip().strip("\xa0")
+                if text:
+                    result.append(text)
+            elif child.root.tag == "a":
+                # Link element - check for Cloudflare-protected email
+                cf_email = child.xpath(".//span[@class='__cf_email__']/@data-cfemail").get()
+                if cf_email:
+                    decoded = decode_cloudflare_email(cf_email)
+                    if decoded:
+                        result.append(decoded)
+                else:
+                    # Regular link text
+                    text = "".join(child.xpath(".//text()").getall()).strip()
+                    if text and text != "\xa0":
+                        result.append(text)
+            else:
+                # Other elements - recursively extract text
+                text = "".join(child.xpath(".//text()").getall()).strip()
+                if text and text != "\xa0":
+                    result.append(text)
+        
+        return re.sub(r"\s+", " ", " ".join(result)).strip()
     
     def _is_location_string(self, text, location_name):
         """Check if text is a location string that should be excluded from description."""
