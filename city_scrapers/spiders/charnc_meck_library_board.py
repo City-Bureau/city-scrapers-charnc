@@ -12,6 +12,7 @@ from city_scrapers_core.constants import (
 )
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from dateutil.parser import ParserError
 from dateutil.parser import parse as dt_parse
 from dateutil.relativedelta import relativedelta
 
@@ -86,10 +87,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             yield meeting
 
     def _get_status(self, meeting, text=""):
-        if meeting["start"] < datetime.now(tz=ZoneInfo(self.timezone)):
-            return PASSED
         if "cancel" in text.lower():
             return CANCELLED
+        if meeting["start"] < datetime.now(tz=ZoneInfo(self.timezone)):
+            return PASSED
         return TENTATIVE
 
     def _parse_description(self, p, location_name=""):

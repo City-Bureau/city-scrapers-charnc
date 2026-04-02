@@ -24,7 +24,7 @@ freezer.stop()
 
 
 def test_count():
-    assert len(parsed_items) == 80
+    assert len(parsed_items) == 81
 
 
 def test_title():
@@ -101,7 +101,11 @@ def test_classification():
 
 def test_cancelled():
     cancelled = [item for item in parsed_items if item["status"] == CANCELLED]
-    assert len(cancelled) == 0
+    assert len(cancelled) == 1
+    assert cancelled[0]["title"] == "Board of Trustees Meeting"
+    assert cancelled[0]["start"] == datetime(
+        2025, 7, 21, 16, 0, tzinfo=ZoneInfo("America/New_York")
+    )
 
 
 @pytest.mark.parametrize("item", parsed_items)
