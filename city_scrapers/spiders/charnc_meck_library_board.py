@@ -34,8 +34,7 @@ def decode_cloudflare_email(encoded):
     try:
         key = int(encoded[:2], 16)
         decoded = "".join(
-            chr(int(encoded[i:i+2], 16) ^ key)
-            for i in range(2, len(encoded), 2)
+            chr(int(encoded[i : i + 2], 16) ^ key) for i in range(2, len(encoded), 2)
         )
         return decoded
     except (ValueError, IndexError):
@@ -98,7 +97,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
         # Extract text with emails from the main paragraph
         main_text = self._extract_text_with_emails(p)
-        
+
         # Remove the strong text (date/time and title) from main_text
         strong_text = re.sub(
             r"[\s\xa0]+",
@@ -106,15 +105,15 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             " ".join(p.css("strong::text").getall()).strip(),
         )
         if strong_text and main_text.startswith(strong_text):
-            main_text = main_text[len(strong_text):].strip()
-        
+            main_text = main_text[len(strong_text) :].strip()
+
         # Also remove the raw title if present
         p_texts = p.xpath("./text()").getall()
         if p_texts:
             title_text = p_texts[0].strip().strip("\xa0")
             if title_text and main_text.startswith(title_text):
-                main_text = main_text[len(title_text):].strip()
-        
+                main_text = main_text[len(title_text) :].strip()
+
         # Add remaining text if it's not a location
         if main_text and main_text != location_name:
             if not self._is_location_string(main_text, location_name):
@@ -127,11 +126,11 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 break
             if sib.css("strong"):
                 break
-            
+
             # Extract text with decoded emails
             sib_clean = self._extract_text_with_emails(sib)
             sib_clean = re.sub(r"^Location:\s*", "", sib_clean).strip()
-            
+
             if not sib_clean:
                 continue
             if location_name and sib_clean == location_name:
@@ -161,11 +160,11 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             parts.append(sib_clean)
 
         return " ".join(part for part in parts if part)
-    
+
     def _extract_text_with_emails(self, selector):
         """Extract text from selector, decoding Cloudflare-protected emails."""
         result = []
-        
+
         # Process all child nodes in order
         for child in selector.xpath("./node()"):
             if isinstance(child.root, str):
@@ -175,7 +174,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                     result.append(text)
             elif child.root.tag == "a":
                 # Link element - check for Cloudflare-protected email
-                cf_email = child.xpath(".//span[@class='__cf_email__']/@data-cfemail").get()
+                cf_email = child.xpath(
+                    ".//span[@class='__cf_email__']/@data-cfemail"
+                ).get()
                 if cf_email:
                     decoded = decode_cloudflare_email(cf_email)
                     if decoded:
@@ -190,29 +191,29 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 text = "".join(child.xpath(".//text()").getall()).strip()
                 if text and text != "\xa0":
                     result.append(text)
-        
+
         return re.sub(r"\s+", " ", " ".join(result)).strip()
-    
+
     def _is_location_string(self, text, location_name):
         """Check if text is a location string that should be excluded from description."""
         if not text:
             return False
-        
+
         # Check if it matches the location name
         if location_name and text == location_name:
             return True
-        
+
         # Check if it starts with the location name followed by address info
         if location_name and text.startswith(location_name):
             # Check if there's a comma followed by address-like content
-            remainder = text[len(location_name):].strip()
+            remainder = text[len(location_name) :].strip()
             if remainder.startswith(",") and re.search(r"\d+\s+\w+", remainder):
                 return True
-        
+
         # Check if it's just a library name followed by "Agenda Minutes"
         if re.match(r"^[\w\s:&-]+\s+(Library|Center)\s+Agenda\s+Minutes$", text):
             return True
-        
+
         return False
 
     def _get_raw_title(self, p):
@@ -286,32 +287,32 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         """Split location text into name and address components."""
         if not location_text:
             return {"name": "", "address": ""}
-        
+
         # Pattern 1: Full address with City, State ZIP
         full_address_pattern = r",\s*\d+\s+[^,]+,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}"
         match = re.search(full_address_pattern, location_text)
-        
+
         if match:
-            name = location_text[:match.start()].strip()
-            address = location_text[match.start() + 1:].strip()
+            name = location_text[: match.start()].strip()
+            address = location_text[match.start() + 1 :].strip()
             return {"name": name, "address": address}
-        
+
         # Pattern 2: Partial address (street number + street name)
         partial_address_pattern = r",\s*\d+\s+[^,]+\.?$"
         match = re.search(partial_address_pattern, location_text)
-        
+
         if match:
-            name = location_text[:match.start()].strip()
-            address = location_text[match.start() + 1:].strip()
+            name = location_text[: match.start()].strip()
+            address = location_text[match.start() + 1 :].strip()
             return {"name": name, "address": address}
-        
+
         # Hardcode address for Library Administration Center
         if "library administration center" in location_text.lower():
             return {
                 "name": "Library Administration Center",
-                "address": "510 Stitt Road, Charlotte, NC 28213"
+                "address": "510 Stitt Road, Charlotte, NC 28213",
             }
-        
+
         # No address found, return as name only
         return {"name": location_text, "address": ""}
 
