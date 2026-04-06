@@ -50,9 +50,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     years_back = 6
 
     def parse(self, response):
-        cutoff = datetime.now(tz=ZoneInfo(self.timezone)) - relativedelta(
-            years=self.years_back
-        )
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        cutoff = today - relativedelta(years=self.years_back)
         for p in response.css("p"):
             strong_text = re.sub(
                 r"[\s\xa0]+",
@@ -111,7 +110,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         # Also remove the raw title if present
         p_texts = p.xpath("./text()").getall()
         if p_texts:
-            title_text = p_texts[0].strip().strip("\xa0")
+            title_text = re.sub(r"[\s\xa0]+", " ", p_texts[0]).strip()
             if title_text and main_text.startswith(title_text):
                 main_text = main_text[len(title_text) :].strip()
 
@@ -168,9 +167,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
         # Process all child nodes in order
         for child in selector.xpath("./node()"):
-            if isinstance(child.root, str):
-                # Text node
-                text = child.root.strip().strip("\xa0")
+            # Check for text node
+            if not child.root.tag if hasattr(child.root, "tag") else True:
+                text = child.get().strip().strip("\xa0")
                 if text:
                     result.append(text)
             elif child.root.tag == "a":
