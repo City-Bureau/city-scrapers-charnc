@@ -16,31 +16,6 @@ from dateutil.parser import ParserError
 from dateutil.parser import parse as dt_parse
 from dateutil.relativedelta import relativedelta
 
-MONTH_TYPO_MAP = {
-    "ocotober": "october",
-}
-
-DT_RE = re.compile(
-    r"(\w+ \d{1,2}, \d{4}),?\s*"
-    r"(\d{1,2}:\d{2}\s*[ap]m)"
-    r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[ap]m))?",
-    re.I,
-)
-
-
-def decode_cloudflare_email(encoded):
-    """Decode Cloudflare-protected email from data-cfemail attribute."""
-    if not encoded:
-        return ""
-    try:
-        key = int(encoded[:2], 16)
-        decoded = "".join(
-            chr(int(encoded[i : i + 2], 16) ^ key) for i in range(2, len(encoded), 2)
-        )
-        return decoded
-    except (ValueError, IndexError):
-        return ""
-
 
 class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     name = "charnc_meck_library_board"
@@ -48,6 +23,34 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     timezone = "America/New_York"
     start_urls = ["https://www.cmlibrary.org/board-trustees-meetings"]
     years_back = 6
+
+    MONTH_TYPO_MAP = {
+        "ocotober": "october",
+    }
+
+    DT_RE = re.compile(
+        r"(\w+ \d{1,2}, \d{4}),?\s*"
+        r"(\d{1,2}:\d{2}\s*[ap]m)"
+        r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[ap]m))?",
+        re.I,
+    )
+
+    def decode_cloudflare_email(self, encoded):
+        """Decode Cloudflare-protected email from data-cfemail attribute."""
+        if not encoded:
+            return ""
+        try:
+            key = int(encoded[:2], 16)
+            decoded = "".join(
+                chr(int(encoded[i : i + 2], 16) ^ key)
+                for i in range(2, len(encoded), 2)
+            )
+            return decoded
+        except (ValueError, IndexError) as e:
+            self.logger.warning(
+                f"Failed to decode Cloudflare email: {encoded}, error: {e}"
+            )
+            return ""
 
     def parse(self, response):
         today = datetime.now(tz=ZoneInfo(self.timezone))
@@ -76,7 +79,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 start=start,
                 end=end,
                 all_day=False,
-                time_notes="For more accurate meeting location, please refer to the meeting attachments.",
+                time_notes=(
+                    "For more accurate meeting location, please refer to the "
+                    "meeting attachments."
+                ),
                 location=location,
                 links=self._parse_links(p),
                 source=response.url,
@@ -117,7 +123,12 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         # Add remaining text if it's not a location
         if main_text and main_text != location_name:
             if not self._is_location_string(main_text, location_name):
-                parts.append(main_text)
+                # Remove "Agenda Minutes" from the end of text
+                main_text = re.sub(
+                    r"\s*Agenda\s+Minutes\s*$", "", main_text, flags=re.I
+                ).strip()
+                if main_text:
+                    parts.append(main_text)
 
         # Sibling paragraphs: non-location, non-agenda/minutes-only content
         for i in range(1, 5):
@@ -142,8 +153,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 r"\s+",
                 " ",
                 " ".join(
-                    t
-                    for t in sib.xpath("./text()").getall()
+                    t.strip()
+                    for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
                     if t.strip() and t.strip() != "\xa0"
                 ),
             ).strip()
@@ -157,7 +168,12 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             ]
             if agenda_minutes_links and not direct:
                 continue
-            parts.append(sib_clean)
+            # Remove "Agenda Minutes" from the end of text
+            sib_clean = re.sub(
+                r"\s*Agenda\s+Minutes\s*$", "", sib_clean, flags=re.I
+            ).strip()
+            if sib_clean:
+                parts.append(sib_clean)
 
         return " ".join(part for part in parts if part)
 
@@ -168,7 +184,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         # Process all child nodes in order
         for child in selector.xpath("./node()"):
             # Check for text node
-            if not child.root.tag if hasattr(child.root, "tag") else True:
+            if not hasattr(child.root, "tag"):
                 text = child.get().strip().strip("\xa0")
                 if text:
                     result.append(text)
@@ -178,7 +194,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                     ".//span[@class='__cf_email__']/@data-cfemail"
                 ).get()
                 if cf_email:
-                    decoded = decode_cloudflare_email(cf_email)
+                    decoded = self.decode_cloudflare_email(cf_email)
                     if decoded:
                         result.append(decoded)
                 else:
@@ -195,7 +211,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         return re.sub(r"\s+", " ", " ".join(result)).strip()
 
     def _is_location_string(self, text, location_name):
-        """Check if text is a location string that should be excluded from description."""
+        """
+        Check if text is a location string that should be excluded from
+        description.
+        """
         if not text:
             return False
 
@@ -239,9 +258,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
     def _parse_dt(self, text, which):
         text = re.sub(r"[\s\xa0]+", " ", text.strip().strip("\xa0"))
-        for typo, fix in MONTH_TYPO_MAP.items():
+        for typo, fix in self.MONTH_TYPO_MAP.items():
             text = re.sub(typo, fix, text, flags=re.I)
-        m = DT_RE.search(text)
+        m = self.DT_RE.search(text)
         if not m:
             return None
         date_str = m.group(1)
@@ -254,8 +273,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             elif which == "end" and end_time:
                 naive_dt = dt_parse("{} {}".format(date_str, end_time), ignoretz=True)
                 return naive_dt.replace(tzinfo=ZoneInfo(self.timezone))
-        except (ValueError, ParserError):
-            pass
+        except (ValueError, ParserError) as e:
+            self.logger.warning(
+                f"Failed to parse datetime from '{text}' ({which}): {e}"
+            )
         return None
 
     def _parse_classification(self, title):
@@ -269,7 +290,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         return NOT_CLASSIFIED
 
     def _clean_text(self, selector, strip_location_prefix=False):
-        """Extract and clean text from a selector, removing extra whitespace and nbsp."""
+        """
+        Extract and clean text from a selector, removing extra whitespace
+        and nbsp.
+        """
         text = re.sub(
             r"\s+",
             " ",
@@ -369,7 +393,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         " ",
                         " ".join(
                             t.strip()
-                            for t in sib.xpath("./text()").getall()
+                            for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
                             if t.strip() and t.strip() != "\xa0"
                         ),
                     ).strip()
