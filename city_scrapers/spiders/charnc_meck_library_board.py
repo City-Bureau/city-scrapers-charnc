@@ -35,6 +35,28 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         re.I,
     )
 
+    AGENDA_MINUTES_RE = re.compile(r"\s*Agenda\s+Minutes\s*$", re.I)
+    LOCATION_PREFIX_RE = re.compile(r"^Location:\s*")
+
+    LOCATION_EXCLUSION_KEYWORDS = [
+        "email",
+        "please",
+        "meeting will be",
+        "board of trustees is",
+        "closed session",
+        "pursuant",
+        "speak during",
+    ]
+
+    MAX_INLINE_LOCATION_LENGTH = 80
+    MAX_SIBLING_LOCATION_LENGTH = 120
+    MAX_SIBLING_PARAGRAPHS_TO_CHECK = 5
+    MAX_LINK_CANDIDATES = 4
+
+    def _normalize_whitespace(self, text):
+        """Normalize whitespace and non-breaking spaces to single spaces."""
+        return re.sub(r"[\s\xa0]+", " ", text).strip()
+
     def decode_cloudflare_email(self, encoded):
         """Decode Cloudflare-protected email from data-cfemail attribute."""
         if not encoded:
@@ -56,23 +78,21 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         today = datetime.now(tz=ZoneInfo(self.timezone))
         cutoff = today - relativedelta(years=self.years_back)
         for p in response.css("p"):
-            strong_text = re.sub(
-                r"[\s\xa0]+",
-                " ",
-                " ".join(p.css("strong::text").getall()).strip(),
+            strong_text = self._normalize_whitespace(
+                " ".join(p.css("strong::text").getall())
             )
             if not re.search(r"\b\w+ \d{1,2}, \d{4}\b", strong_text):
                 continue
-            start = self._parse_start(strong_text)
+            start = self._parse_dt(strong_text, "start")
             if not start or start < cutoff:
                 continue
-            end = self._parse_end(strong_text)
+            end = self._parse_dt(strong_text, "end")
             raw_title = self._get_raw_title(p)
             title = self._parse_title(raw_title)
             location = self._parse_location(p)
             meeting = Meeting(
                 title=title,
-                description=self._parse_description(p, location["name"]),
+                description=self._parse_description(p, strong_text, location["name"]),
                 classification=self._parse_classification(
                     "{} {}".format(title, self.agency)
                 ),
@@ -98,40 +118,32 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             return PASSED
         return TENTATIVE
 
-    def _parse_description(self, p, location_name=""):
+    def _parse_description(self, p, strong_text, location_name=""):
         parts = []
 
         # Extract text with emails from the main paragraph
         main_text = self._extract_text_with_emails(p)
 
         # Remove the strong text (date/time and title) from main_text
-        strong_text = re.sub(
-            r"[\s\xa0]+",
-            " ",
-            " ".join(p.css("strong::text").getall()).strip(),
-        )
         if strong_text and main_text.startswith(strong_text):
             main_text = main_text[len(strong_text) :].strip()
 
         # Also remove the raw title if present
         p_texts = p.xpath("./text()").getall()
         if p_texts:
-            title_text = re.sub(r"[\s\xa0]+", " ", p_texts[0]).strip()
+            title_text = self._normalize_whitespace(p_texts[0])
             if title_text and main_text.startswith(title_text):
                 main_text = main_text[len(title_text) :].strip()
 
         # Add remaining text if it's not a location
         if main_text and main_text != location_name:
             if not self._is_location_string(main_text, location_name):
-                # Remove "Agenda Minutes" from the end of text
-                main_text = re.sub(
-                    r"\s*Agenda\s+Minutes\s*$", "", main_text, flags=re.I
-                ).strip()
+                main_text = self.AGENDA_MINUTES_RE.sub("", main_text).strip()
                 if main_text:
                     parts.append(main_text)
 
         # Sibling paragraphs: non-location, non-agenda/minutes-only content
-        for i in range(1, 5):
+        for i in range(1, self.MAX_SIBLING_PARAGRAPHS_TO_CHECK):
             sib = p.xpath("following-sibling::p[{}]".format(i))
             if not sib:
                 break
@@ -140,24 +152,21 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
             # Extract text with decoded emails
             sib_clean = self._extract_text_with_emails(sib)
-            sib_clean = re.sub(r"^Location:\s*", "", sib_clean).strip()
+            sib_clean = self.LOCATION_PREFIX_RE.sub("", sib_clean).strip()
 
             if not sib_clean:
                 continue
             if location_name and sib_clean == location_name:
                 continue
-            # Skip if this looks like a location with address
             if self._is_location_string(sib_clean, location_name):
                 continue
-            direct = re.sub(
-                r"\s+",
-                " ",
+            direct = self._normalize_whitespace(
                 " ".join(
                     t.strip()
                     for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
                     if t.strip() and t.strip() != "\xa0"
-                ),
-            ).strip()
+                )
+            )
             agenda_minutes_links = [
                 a
                 for a in sib.css("a")
@@ -168,10 +177,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             ]
             if agenda_minutes_links and not direct:
                 continue
-            # Remove "Agenda Minutes" from the end of text
-            sib_clean = re.sub(
-                r"\s*Agenda\s+Minutes\s*$", "", sib_clean, flags=re.I
-            ).strip()
+            sib_clean = self.AGENDA_MINUTES_RE.sub("", sib_clean).strip()
             if sib_clean:
                 parts.append(sib_clean)
 
@@ -208,7 +214,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 if text and text != "\xa0":
                     result.append(text)
 
-        return re.sub(r"\s+", " ", " ".join(result)).strip()
+        return self._normalize_whitespace(" ".join(result))
 
     def _is_location_string(self, text, location_name):
         """
@@ -250,14 +256,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         title = re.sub(r"\s+", " ", title).strip()
         return title or self.agency
 
-    def _parse_start(self, strong_text):
-        return self._parse_dt(strong_text, "start")
-
-    def _parse_end(self, strong_text):
-        return self._parse_dt(strong_text, "end")
-
     def _parse_dt(self, text, which):
-        text = re.sub(r"[\s\xa0]+", " ", text.strip().strip("\xa0"))
+        text = self._normalize_whitespace(text)
         for typo, fix in self.MONTH_TYPO_MAP.items():
             text = re.sub(typo, fix, text, flags=re.I)
         m = self.DT_RE.search(text)
@@ -294,17 +294,15 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         Extract and clean text from a selector, removing extra whitespace
         and nbsp.
         """
-        text = re.sub(
-            r"\s+",
-            " ",
+        text = self._normalize_whitespace(
             " ".join(
                 t.strip()
                 for t in selector.css("::text").getall()
                 if t.strip() and t.strip() != "\xa0"
-            ),
-        ).strip()
+            )
+        )
         if strip_location_prefix:
-            text = re.sub(r"^Location:\s*", "", text).strip()
+            text = self.LOCATION_PREFIX_RE.sub("", text).strip()
         return text
 
     def _split_location(self, location_text):
@@ -348,18 +346,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         ]
         if len(texts) > 1:
             candidate = texts[1]
-            if len(candidate) < 80 and not any(
-                kw in candidate.lower()
-                for kw in [
-                    "email",
-                    "please",
-                    "meeting will be",
-                    "board of trustees is",
-                    "closed session",
-                    "pursuant",
-                ]
+            if len(candidate) < self.MAX_INLINE_LOCATION_LENGTH and not any(
+                kw in candidate.lower() for kw in self.LOCATION_EXCLUSION_KEYWORDS
             ):
-                loc = re.sub(r"^Location:\s*", "", candidate).strip()
+                loc = self.LOCATION_PREFIX_RE.sub("", candidate).strip()
                 if loc:
                     return self._split_location(loc)
 
@@ -368,17 +358,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             sib_text = self._clean_text(sib, strip_location_prefix=True)
             if (
                 sib_text
-                and len(sib_text) < 120
+                and len(sib_text) < self.MAX_SIBLING_LOCATION_LENGTH
                 and not any(
-                    kw in sib_text.lower()
-                    for kw in [
-                        "email",
-                        "please",
-                        "meeting will be",
-                        "closed session",
-                        "pursuant",
-                        "speak during",
-                    ]
+                    kw in sib_text.lower() for kw in self.LOCATION_EXCLUSION_KEYWORDS
                 )
             ):
                 has_agenda = any(
@@ -388,15 +370,13 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                     "minutes" in t.lower() for t in sib.css("a::text").getall()
                 )
                 if has_agenda or has_minutes:
-                    loc_text = re.sub(
-                        r"\s+",
-                        " ",
+                    loc_text = self._normalize_whitespace(
                         " ".join(
                             t.strip()
                             for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
                             if t.strip() and t.strip() != "\xa0"
-                        ),
-                    ).strip()
+                        )
+                    )
                     if loc_text:
                         return self._split_location(loc_text)
                 else:
@@ -407,7 +387,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
     def _parse_links(self, p):
         links = []
         candidates = [p]
-        for i in range(1, 4):
+        for i in range(1, self.MAX_LINK_CANDIDATES):
             sib = p.xpath("following-sibling::p[{}]".format(i))
             if sib:
                 candidates.append(sib)
@@ -419,7 +399,7 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 href = a.attrib.get("href", "").strip()
                 if not href:
                     continue
-                text = " ".join(a.css("::text").getall()).strip().strip("\xa0").strip()
+                text = self._normalize_whitespace(" ".join(a.css("::text").getall()))
                 if "agenda" in text.lower():
                     links.append({"href": href, "title": "Agenda"})
                 elif "minutes" in text.lower():
