@@ -1,6 +1,5 @@
 from datetime import datetime
 from os.path import dirname, join
-from zoneinfo import ZoneInfo
 
 import pytest
 from city_scrapers_core.constants import BOARD, CANCELLED, PASSED, TENTATIVE
@@ -44,15 +43,11 @@ def test_description(parsed_items):
 
 
 def test_start(parsed_items):
-    assert parsed_items[0]["start"] == datetime(
-        2026, 1, 20, 16, 0, tzinfo=ZoneInfo("America/New_York")
-    )
+    assert parsed_items[0]["start"] == datetime(2026, 1, 20, 16, 0)
 
 
 def test_end(parsed_items):
-    assert parsed_items[0]["end"] == datetime(
-        2026, 1, 20, 17, 30, tzinfo=ZoneInfo("America/New_York")
-    )
+    assert parsed_items[0]["end"] == datetime(2026, 1, 20, 17, 30)
 
 
 def test_time_notes(parsed_items):
@@ -109,9 +104,7 @@ def test_cancelled(parsed_items):
     cancelled = [item for item in parsed_items if item["status"] == CANCELLED]
     assert len(cancelled) == 1
     assert cancelled[0]["title"] == "Board of Trustees Meeting"
-    assert cancelled[0]["start"] == datetime(
-        2025, 7, 21, 16, 0, tzinfo=ZoneInfo("America/New_York")
-    )
+    assert cancelled[0]["start"] == datetime(2025, 7, 21, 16, 0)
 
 
 def test_all_day(parsed_items):

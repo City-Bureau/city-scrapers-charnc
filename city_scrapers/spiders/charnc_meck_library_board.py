@@ -2,14 +2,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from city_scrapers_core.constants import (
-    BOARD,
-    CANCELLED,
-    COMMITTEE,
-    NOT_CLASSIFIED,
-    PASSED,
-    TENTATIVE,
-)
+from city_scrapers_core.constants import BOARD, CANCELLED, COMMITTEE, NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.parser import ParserError
@@ -30,8 +23,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
     DT_RE = re.compile(
         r"(\w+ \d{1,2}, \d{4}),?\s*"
-        r"(\d{1,2}:\d{2}\s*[ap]m)"
-        r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[ap]m))?",
+        r"(\d{1,2}:\d{2}\s*(?:apm|[ap]m))"
+        r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*(?:apm|[ap]m)))?",
         re.I,
     )
 
@@ -106,7 +99,12 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                     continue
 
                 start = self._parse_dt(strong_text, "start")
-                if not start or start < cutoff:
+                if not start:
+                    continue
+
+                # Convert to timezone-aware for comparison with cutoff
+                start_aware = start.replace(tzinfo=ZoneInfo(self.timezone))
+                if start_aware < cutoff:
                     continue
 
                 end = self._parse_dt(strong_text, "end")
@@ -114,25 +112,26 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 title = self._parse_title(raw_title)
                 location = self._parse_location(p)
 
-                meeting = Meeting(
-                    title=title,
-                    description=self._parse_description(
+                meeting_data = {
+                    "title": title,
+                    "description": self._parse_description(
                         p, strong_text, location["name"]
                     ),
-                    classification=self._parse_classification(
+                    "classification": self._parse_classification(
                         "{} {}".format(title, self.agency)
                     ),
-                    start=start,
-                    end=end,
-                    all_day=False,
-                    time_notes=(
+                    "start": start,
+                    "end": end,
+                    "all_day": False,
+                    "time_notes": (
                         "For more accurate meeting location, please refer to the "
                         "meeting attachments."
                     ),
-                    location=location,
-                    links=self._parse_links(p),
-                    source=response.url,
-                )
+                    "location": location,
+                    "links": self._parse_links(p),
+                    "source": response.url,
+                }
+                meeting = Meeting(**meeting_data)
                 meeting["status"] = self._get_status(meeting, text=strong_text)
                 meeting["id"] = self._get_id(meeting)
                 yield meeting
@@ -142,15 +141,9 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 )
 
     def _get_status(self, meeting, text=""):
-        try:
-            if "cancel" in text.lower():
-                return CANCELLED
-            if meeting["start"] < datetime.now(tz=ZoneInfo(self.timezone)):
-                return PASSED
-            return TENTATIVE
-        except Exception as e:
-            self.logger.warning(f"Failed to determine meeting status: {e}")
-            return TENTATIVE
+        if "cancel" in text.lower():
+            return CANCELLED
+        return super()._get_status(meeting)
 
     def _parse_description(self, p, strong_text, location_name=""):
         try:
@@ -314,15 +307,21 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         if not m:
             return None
         date_str = m.group(1)
-        start_time = m.group(2).replace(" ", "")
-        end_time = m.group(3).replace(" ", "") if m.group(3) else None
+        start_time = (
+            m.group(2).replace(" ", "").replace("apm", "am").replace("APM", "AM")
+        )
+        end_time = (
+            m.group(3).replace(" ", "").replace("apm", "am").replace("APM", "AM")
+            if m.group(3)
+            else None
+        )
         try:
             if which == "start":
                 naive_dt = dt_parse("{} {}".format(date_str, start_time), ignoretz=True)
-                return naive_dt.replace(tzinfo=ZoneInfo(self.timezone))
+                return naive_dt
             elif which == "end" and end_time:
                 naive_dt = dt_parse("{} {}".format(date_str, end_time), ignoretz=True)
-                return naive_dt.replace(tzinfo=ZoneInfo(self.timezone))
+                return naive_dt
         except (ValueError, ParserError) as e:
             self.logger.warning(
                 f"Failed to parse datetime from '{text}' ({which}): {e}"
@@ -395,9 +394,15 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                 for t in p.xpath("./text()").getall()
                 if t.strip() and t.strip() != "\xa0"
             ]
+            # Check for inline location in second text node or single text node
+            candidate = None
             if len(texts) > 1:
                 candidate = texts[1]
-                if len(candidate) < self.MAX_INLINE_LOCATION_LENGTH and not any(
+            elif len(texts) == 1:
+                candidate = texts[0]
+
+            if candidate:
+                if len(candidate) <= self.MAX_INLINE_LOCATION_LENGTH and not any(
                     kw in candidate.lower() for kw in self.LOCATION_EXCLUSION_KEYWORDS
                 ):
                     loc = self.LOCATION_PREFIX_RE.sub("", candidate).strip()
@@ -406,6 +411,13 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
             sib = p.xpath("following-sibling::p[1]")
             if sib:
+                # Check if sibling contains a date/time pattern
+                # (indicates another meeting)
+                sib_strong_text = " ".join(sib.css("strong::text").getall())
+                if re.search(r"\b\w+ \d{1,2}, \d{4}\b", sib_strong_text):
+                    # Sibling is another meeting, don't use it for location
+                    return {"name": "", "address": ""}
+
                 sib_text = self._clean_text(sib, strip_location_prefix=True)
                 if (
                     sib_text
@@ -415,6 +427,11 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         for kw in self.LOCATION_EXCLUSION_KEYWORDS
                     )
                 ):
+                    has_links = bool(sib.css("a"))
+                    if not has_links:
+                        return self._split_location(sib_text)
+
+                    # If sibling has links, check if they're agenda/minutes
                     has_agenda = any(
                         "agenda" in t.lower() for t in sib.css("a::text").getall()
                     )
@@ -433,8 +450,6 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         )
                         if loc_text:
                             return self._split_location(loc_text)
-                    else:
-                        return self._split_location(sib_text)
 
             return {"name": "", "address": ""}
         except Exception as e:
