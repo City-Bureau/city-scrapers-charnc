@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from city_scrapers_core.constants import BOARD, CANCELLED, COMMITTEE, NOT_CLASSIFIED
+from city_scrapers_core.constants import BOARD, COMMITTEE, NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.parser import ParserError
@@ -23,8 +23,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
 
     DT_RE = re.compile(
         r"(\w+ \d{1,2}, \d{4}),?\s*"
-        r"(\d{1,2}:\d{2}\s*(?:apm|[ap]m))"
-        r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*(?:apm|[ap]m)))?",
+        r"(\d{1,2}:\d{2}\s*[ap]m)"
+        r"(?:\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[ap]m))?",
         re.I,
     )
 
@@ -83,12 +83,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
             return ""
 
     def parse(self, response):
-        try:
-            today = datetime.now(tz=ZoneInfo(self.timezone))
-            cutoff = today - relativedelta(years=self.years_back)
-        except Exception as e:
-            self.logger.error(f"Failed to initialize date range: {e}")
-            return
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        cutoff = today - relativedelta(years=self.years_back)
 
         for p in response.css("p"):
             try:
@@ -140,124 +136,111 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                     f"Failed to parse meeting from paragraph: {e}", exc_info=True
                 )
 
-    def _get_status(self, meeting, text=""):
-        if "cancel" in text.lower():
-            return CANCELLED
-        return super()._get_status(meeting)
-
     def _parse_description(self, p, strong_text, location_name=""):
-        try:
-            parts = []
+        parts = []
 
-            # Extract text with emails from the main paragraph
-            main_text = self._extract_text_with_emails(p)
+        # Extract text with emails from the main paragraph
+        main_text = self._extract_text_with_emails(p)
 
-            # Remove the strong text (date/time and title) from main_text
-            if strong_text and main_text.startswith(strong_text):
-                main_text = main_text[len(strong_text) :].strip()
+        # Remove the strong text (date/time and title) from main_text
+        if strong_text and main_text.startswith(strong_text):
+            main_text = main_text[len(strong_text) :].strip()
 
-            # Also remove the raw title if present
-            p_texts = p.xpath("./text()").getall()
-            if p_texts:
-                title_text = self._normalize_whitespace(p_texts[0])
-                if title_text and main_text.startswith(title_text):
-                    main_text = main_text[len(title_text) :].strip()
+        # Also remove the raw title if present
+        p_texts = p.xpath("./text()").getall()
+        if p_texts:
+            title_text = self._normalize_whitespace(p_texts[0])
+            if title_text and main_text.startswith(title_text):
+                main_text = main_text[len(title_text) :].strip()
 
-            # Add remaining text if it's not a location
-            if main_text and main_text != location_name:
-                if not self._is_location_string(main_text, location_name):
-                    main_text = self.AGENDA_MINUTES_RE.sub("", main_text).strip()
-                    if main_text:
-                        parts.append(main_text)
+        # Add remaining text if it's not a location
+        if main_text and main_text != location_name:
+            if not self._is_location_string(main_text, location_name):
+                main_text = self.AGENDA_MINUTES_RE.sub("", main_text).strip()
+                if main_text:
+                    parts.append(main_text)
 
-            # Sibling paragraphs: non-location, non-agenda/minutes-only content
-            for i in range(1, self.MAX_SIBLING_PARAGRAPHS_TO_CHECK):
-                try:
-                    sib = p.xpath("following-sibling::p[{}]".format(i))
-                    if not sib:
-                        break
-                    if sib.css("strong"):
-                        break
+        # Sibling paragraphs: non-location, non-agenda/minutes-only content
+        for i in range(1, self.MAX_SIBLING_PARAGRAPHS_TO_CHECK):
+            try:
+                sib = p.xpath("following-sibling::p[{}]".format(i))
+                if not sib:
+                    break
+                if sib.css("strong"):
+                    break
 
-                    # Extract text with decoded emails
-                    sib_clean = self._extract_text_with_emails(sib)
-                    sib_clean = self.LOCATION_PREFIX_RE.sub("", sib_clean).strip()
+                # Extract text with decoded emails
+                sib_clean = self._extract_text_with_emails(sib)
+                sib_clean = self.LOCATION_PREFIX_RE.sub("", sib_clean).strip()
 
-                    if not sib_clean:
-                        continue
-                    if location_name and sib_clean == location_name:
-                        continue
-                    if self._is_location_string(sib_clean, location_name):
-                        continue
-                    direct = self._normalize_whitespace(
-                        " ".join(
-                            t.strip()
-                            for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
-                            if t.strip() and t.strip() != "\xa0"
-                        )
-                    )
-                    agenda_minutes_links = [
-                        a
-                        for a in sib.css("a")
-                        if any(
-                            kw in " ".join(a.css("::text").getall()).lower()
-                            for kw in ["agenda", "minutes"]
-                        )
-                    ]
-                    if agenda_minutes_links and not direct:
-                        continue
-                    sib_clean = self.AGENDA_MINUTES_RE.sub("", sib_clean).strip()
-                    if sib_clean:
-                        parts.append(sib_clean)
-                except Exception as e:
-                    self.logger.warning(f"Failed to process sibling paragraph {i}: {e}")
+                if not sib_clean:
                     continue
+                if location_name and sib_clean == location_name:
+                    continue
+                if self._is_location_string(sib_clean, location_name):
+                    continue
+                direct = self._normalize_whitespace(
+                    " ".join(
+                        t.strip()
+                        for t in sib.xpath(".//text()[not(ancestor::a)]").getall()
+                        if t.strip() and t.strip() != "\xa0"
+                    )
+                )
+                agenda_minutes_links = [
+                    a
+                    for a in sib.css("a")
+                    if any(
+                        kw in " ".join(a.css("::text").getall()).lower()
+                        for kw in ["agenda", "minutes"]
+                    )
+                ]
+                if agenda_minutes_links and not direct:
+                    continue
+                sib_clean = self.AGENDA_MINUTES_RE.sub("", sib_clean).strip()
+                if sib_clean:
+                    parts.append(sib_clean)
+            except Exception as e:
+                self.logger.warning(f"Failed to process sibling paragraph {i}: {e}")
+                continue
 
-            return " ".join(part for part in parts if part)
-        except Exception as e:
-            self.logger.error(f"Failed to parse description: {e}")
-            return ""
+        return " ".join(part for part in parts if part)
 
     def _extract_text_with_emails(self, selector):
         """Extract text from selector, decoding Cloudflare-protected emails."""
-        try:
-            result = []
+        result = []
 
-            # Process all child nodes in order
-            for child in selector.xpath("./node()"):
-                try:
-                    # Check for text node
-                    if not hasattr(child.root, "tag"):
-                        text = child.get().strip().strip("\xa0")
-                        if text:
-                            result.append(text)
-                    elif child.root.tag == "a":
-                        # Link element - check for Cloudflare-protected email
-                        cf_email = child.xpath(
-                            ".//span[@class='__cf_email__']/@data-cfemail"
-                        ).get()
-                        if cf_email:
-                            decoded = self.decode_cloudflare_email(cf_email)
-                            if decoded:
-                                result.append(decoded)
-                        else:
-                            # Regular link text
-                            text = "".join(child.xpath(".//text()").getall()).strip()
-                            if text and text != "\xa0":
-                                result.append(text)
+        # Process all child nodes in order
+        for child in selector.xpath("./node()"):
+            try:
+                # Check for text node
+                if not hasattr(child.root, "tag"):
+                    text = child.get().strip().strip("\xa0")
+                    if text:
+                        result.append(text)
+                elif child.root.tag == "a":
+                    # Link element - check for Cloudflare-protected email
+                    cf_email = child.xpath(
+                        ".//span[@class='__cf_email__']/@data-cfemail"
+                    ).get()
+                    if cf_email:
+                        decoded = self.decode_cloudflare_email(cf_email)
+                        if decoded:
+                            result.append(decoded)
                     else:
-                        # Other elements - recursively extract text
+                        # Regular link text
                         text = "".join(child.xpath(".//text()").getall()).strip()
                         if text and text != "\xa0":
                             result.append(text)
-                except Exception as e:
-                    self.logger.warning(f"Failed to process child node: {e}")
-                    continue
+                else:
+                    # Other elements - recursively extract text
+                    text = "".join(child.xpath(".//text()").getall()).strip()
+                    if text and text != "\xa0":
+                        result.append(text)
+            except Exception as e:
+                self.logger.warning(f"Failed to process child node: {e}")
+                continue
 
-            return self._normalize_whitespace(" ".join(result))
-        except Exception as e:
-            self.logger.error(f"Failed to extract text with emails: {e}")
-            return ""
+        return self._normalize_whitespace(" ".join(result))
 
     def _is_location_string(self, text, location_name):
         """
@@ -303,18 +286,14 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         text = self._normalize_whitespace(text)
         for typo, fix in self.MONTH_TYPO_MAP.items():
             text = re.sub(typo, fix, text, flags=re.I)
+        # Fix "apm" typo before regex matching
+        text = text.replace("apm", "am").replace("APM", "AM")
         m = self.DT_RE.search(text)
         if not m:
             return None
         date_str = m.group(1)
-        start_time = (
-            m.group(2).replace(" ", "").replace("apm", "am").replace("APM", "AM")
-        )
-        end_time = (
-            m.group(3).replace(" ", "").replace("apm", "am").replace("APM", "AM")
-            if m.group(3)
-            else None
-        )
+        start_time = m.group(2).replace(" ", "")
+        end_time = m.group(3).replace(" ", "") if m.group(3) else None
         try:
             if which == "start":
                 naive_dt = dt_parse("{} {}".format(date_str, start_time), ignoretz=True)
@@ -388,36 +367,14 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         return {"name": location_text, "address": ""}
 
     def _parse_location(self, p):
-        try:
-            texts = [
-                t.strip("\xa0").strip()
-                for t in p.xpath("./text()").getall()
-                if t.strip() and t.strip() != "\xa0"
-            ]
-            # Check for inline location in second text node or single text node
-            candidate = None
-            if len(texts) > 1:
-                candidate = texts[1]
-            elif len(texts) == 1:
-                candidate = texts[0]
-
-            if candidate:
-                if len(candidate) <= self.MAX_INLINE_LOCATION_LENGTH and not any(
-                    kw in candidate.lower() for kw in self.LOCATION_EXCLUSION_KEYWORDS
-                ):
-                    loc = self.LOCATION_PREFIX_RE.sub("", candidate).strip()
-                    if loc:
-                        return self._split_location(loc)
-
-            sib = p.xpath("following-sibling::p[1]")
-            if sib:
-                # Check if sibling contains a date/time pattern
-                # (indicates another meeting)
-                sib_strong_text = " ".join(sib.css("strong::text").getall())
-                if re.search(r"\b\w+ \d{1,2}, \d{4}\b", sib_strong_text):
-                    # Sibling is another meeting, don't use it for location
-                    return {"name": "", "address": ""}
-
+        # First check sibling paragraph for location
+        # (prioritize virtual/online meetings)
+        sib = p.xpath("following-sibling::p[1]")
+        if sib:
+            # Check if sibling contains a date/time pattern
+            # (indicates another meeting)
+            sib_strong_text = " ".join(sib.css("strong::text").getall())
+            if not re.search(r"\b\w+ \d{1,2}, \d{4}\b", sib_strong_text):
                 sib_text = self._clean_text(sib, strip_location_prefix=True)
                 if (
                     sib_text
@@ -427,6 +384,10 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         for kw in self.LOCATION_EXCLUSION_KEYWORDS
                     )
                 ):
+                    # Prioritize sibling if it contains "virtual"
+                    if "virtual" in sib_text.lower():
+                        return self._split_location(sib_text)
+
                     has_links = bool(sib.css("a"))
                     if not has_links:
                         return self._split_location(sib_text)
@@ -451,47 +412,60 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         if loc_text:
                             return self._split_location(loc_text)
 
-            return {"name": "", "address": ""}
-        except Exception as e:
-            self.logger.error(f"Failed to parse location: {e}")
-            return {"name": "", "address": ""}
+        # Fallback: check for inline location in text nodes
+        texts = [
+            t.strip("\xa0").strip()
+            for t in p.xpath("./text()").getall()
+            if t.strip() and t.strip() != "\xa0"
+        ]
+        candidate = None
+        if len(texts) > 1:
+            candidate = texts[1]
+        elif len(texts) == 1:
+            candidate = texts[0]
+
+        if candidate:
+            if len(candidate) <= self.MAX_INLINE_LOCATION_LENGTH and not any(
+                kw in candidate.lower() for kw in self.LOCATION_EXCLUSION_KEYWORDS
+            ):
+                loc = self.LOCATION_PREFIX_RE.sub("", candidate).strip()
+                if loc:
+                    return self._split_location(loc)
+
+        return {"name": "", "address": ""}
 
     def _parse_links(self, p):
-        try:
-            links = []
-            candidates = [p]
-            for i in range(1, self.MAX_LINK_CANDIDATES):
-                try:
-                    sib = p.xpath("following-sibling::p[{}]".format(i))
-                    if sib:
-                        candidates.append(sib)
-                except Exception as e:
-                    self.logger.warning(f"Failed to get sibling paragraph {i}: {e}")
-                    continue
+        links = []
+        candidates = [p]
+        for i in range(1, self.MAX_LINK_CANDIDATES):
+            try:
+                sib = p.xpath("following-sibling::p[{}]".format(i))
+                if sib:
+                    candidates.append(sib)
+            except Exception as e:
+                self.logger.warning(f"Failed to get sibling paragraph {i}: {e}")
+                continue
 
-            for candidate in candidates:
-                try:
-                    if candidate is not p and candidate.css("strong"):
-                        break
-                    for a in candidate.css("a"):
-                        try:
-                            href = a.attrib.get("href", "").strip()
-                            if not href:
-                                continue
-                            text = self._normalize_whitespace(
-                                " ".join(a.css("::text").getall())
-                            )
-                            if "agenda" in text.lower():
-                                links.append({"href": href, "title": "Agenda"})
-                            elif "minutes" in text.lower():
-                                links.append({"href": href, "title": "Minutes"})
-                        except Exception as e:
-                            self.logger.warning(f"Failed to process link: {e}")
+        for candidate in candidates:
+            try:
+                if candidate is not p and candidate.css("strong"):
+                    break
+                for a in candidate.css("a"):
+                    try:
+                        href = a.attrib.get("href", "").strip()
+                        if not href:
                             continue
-                except Exception as e:
-                    self.logger.warning(f"Failed to process candidate paragraph: {e}")
-                    continue
-            return links
-        except Exception as e:
-            self.logger.error(f"Failed to parse links: {e}")
-            return []
+                        text = self._normalize_whitespace(
+                            " ".join(a.css("::text").getall())
+                        )
+                        if "agenda" in text.lower():
+                            links.append({"href": href, "title": "Agenda"})
+                        elif "minutes" in text.lower():
+                            links.append({"href": href, "title": "Minutes"})
+                    except Exception as e:
+                        self.logger.warning(f"Failed to process link: {e}")
+                        continue
+            except Exception as e:
+                self.logger.warning(f"Failed to process candidate paragraph: {e}")
+                continue
+        return links
