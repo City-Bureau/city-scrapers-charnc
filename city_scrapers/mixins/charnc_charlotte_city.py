@@ -139,11 +139,11 @@ class CharncCharlotteCitySpiderMixin(
         """
         secrets = {
             "__EVENTARGUMENT": None,
-            "__VIEWSTATE": response.css("[name='__VIEWSTATE']")[0].attrib["value"],
+            "__VIEWSTATE": response.css("[name='__VIEWSTATE']::attr(value)").get(),
         }
-        event_validation = response.css("[name='__EVENTVALIDATION']")
-        if len(event_validation) > 0:
-            secrets["__EVENTVALIDATION"] = event_validation[0].attrib["value"]
+        event_validation = response.css("[name='__EVENTVALIDATION']::attr(value)").get()
+        if event_validation:
+            secrets["__EVENTVALIDATION"] = event_validation
         return secrets
 
     def _parse_legistar_rows(self, response):
@@ -235,7 +235,7 @@ class CharncCharlotteCitySpiderMixin(
         if len(next_page_link) == 0:
             return
 
-        event_target = next_page_link[0].attrib["href"].split("'")[1]
+        event_target = next_page_link.css("::attr(href)").re_first(r"'([^']+)'")
         request_body = response.request.body.decode("utf-8")
         next_page_payload = {
             **parse_qs(request_body),
