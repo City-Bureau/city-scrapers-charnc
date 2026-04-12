@@ -1,0 +1,177 @@
+{
+  "data": [
+    {
+      "type": "node--event",
+      "id": "uuid-bocc-regular-1",
+      "attributes": {
+        "title": "Mecklenburg Board of County Commissioners Regular Meeting  ",
+        "field_event_datetime": [
+          {
+            "value": "2026-04-21T22:00:00+00:00",
+            "end_value": "2026-04-22T00:00:00+00:00",
+            "duration": 120,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": {
+          "langcode": null,
+          "country_code": "US",
+          "administrative_area": "NC",
+          "locality": "Charlotte",
+          "dependent_locality": null,
+          "postal_code": "28202",
+          "sorting_code": null,
+          "address_line1": "600 E. 4th St",
+          "address_line2": "Meeting Chamber",
+          "address_line3": "",
+          "organization": ""
+        },
+        "field_summary": null,
+        "absolute_url": "https://calendar.mecknc.gov/event/mecklenburg-board-county-commissioners-regular-meeting"
+      }
+    },
+    {
+      "type": "node--event",
+      "id": "uuid-budget-policy-1",
+      "attributes": {
+        "title": "Mecklenburg Board of County Commissioners, Budget/Public Policy Meeting",
+        "field_event_datetime": [
+          {
+            "value": "2025-01-14T19:30:00+00:00",
+            "end_value": "2025-01-14T21:00:00+00:00",
+            "duration": 90,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": {
+          "langcode": null,
+          "country_code": "US",
+          "administrative_area": "NC",
+          "locality": "Charlotte",
+          "dependent_locality": null,
+          "postal_code": "28202",
+          "sorting_code": null,
+          "address_line1": "600 E. 4th St",
+          "address_line2": "Room 267",
+          "address_line3": "",
+          "organization": ""
+        },
+        "field_summary": null,
+        "absolute_url": "https://calendar.mecknc.gov/event/budget-public-policy-jan-2025"
+      }
+    },
+    {
+      "type": "node--event",
+      "id": "uuid-planning-commission-1",
+      "attributes": {
+        "title": "Charlotte-Mecklenburg Planning Commission",
+        "field_event_datetime": [
+          {
+            "value": "2026-05-11T20:00:00+00:00",
+            "end_value": "2026-05-11T22:00:00+00:00",
+            "duration": 120,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": {
+          "langcode": null,
+          "country_code": "US",
+          "administrative_area": "NC",
+          "locality": "Charlotte",
+          "dependent_locality": null,
+          "postal_code": "28202",
+          "sorting_code": null,
+          "address_line1": "600 E. 4th St",
+          "address_line2": "",
+          "address_line3": "",
+          "organization": ""
+        },
+        "field_summary": null,
+        "absolute_url": "https://calendar.mecknc.gov/event/charlotte-mecklenburg-planning-commission-may-2026"
+      }
+    },
+    {
+      "type": "node--event",
+      "id": "uuid-cancelled-1",
+      "attributes": {
+        "title": "WILL NOT BE HELD: Waste Management Advisory Board",
+        "field_event_datetime": [
+          {
+            "value": "2026-07-21T19:30:00+00:00",
+            "end_value": "2026-07-21T21:00:00+00:00",
+            "duration": 90,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": null,
+        "field_summary": null,
+        "absolute_url": "https://calendar.mecknc.gov/event/waste-management-advisory-board-july-2026"
+      }
+    },
+    {
+      "type": "node--event",
+      "id": "uuid-bocc-regular-duplicate",
+      "attributes": {
+        "title": "Mecklenburg Board of County Commissioners Regular Meeting  ",
+        "field_event_datetime": [
+          {
+            "value": "2026-04-21T22:00:00+00:00",
+            "end_value": "2026-04-22T00:00:00+00:00",
+            "duration": 120,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": {
+          "langcode": null,
+          "country_code": "US",
+          "administrative_area": "NC",
+          "locality": "Charlotte",
+          "dependent_locality": null,
+          "postal_code": "28202",
+          "sorting_code": null,
+          "address_line1": "600 E. 4th St",
+          "address_line2": "Meeting Chamber",
+          "address_line3": "",
+          "organization": ""
+        },
+        "field_summary": null,
+        "absolute_url": "https://calendar.mecknc.gov/event/mecklenburg-board-county-commissioners-regular-meeting-duplicate"
+      }
+    },
+    {
+      "type": "node--event",
+      "id": "uuid-closure-1",
+      "attributes": {
+        "title": "Mecklenburg County Government Offices Closed for Memorial Day",
+        "field_event_datetime": [
+          {
+            "value": "2026-05-25T04:00:00+00:00",
+            "end_value": "2026-05-26T03:59:00+00:00",
+            "duration": 1439,
+            "rrule": null,
+            "rrule_index": null,
+            "timezone": ""
+          }
+        ],
+        "field_event_address": null,
+        "field_summary": "<p>County offices are closed for Memorial Day.</p>",
+        "absolute_url": "https://calendar.mecknc.gov/event/offices-closed-memorial-day-2026"
+      }
+    }
+  ],
+  "links": {
+    "self": {
+      "href": "https://calendar.mecknc.gov/jsonapi/node/event?page%5Boffset%5D=0&page%5Blimit%5D=50"
+    }
+  }
+}
