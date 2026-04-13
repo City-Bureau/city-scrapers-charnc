@@ -157,16 +157,24 @@ class CharncMeckBocSpider(CityScrapersSpider):
             start = self._parse_dt(attrs, "value")
             if not start:
                 continue
+            end = self._parse_dt(attrs, "end_value")
+            all_day = self._is_all_day(start, end)
+            links = self._match_legistar_links(title, start)
+            # If start time is midnight (parsing artifact), try real time from Legistar
+            if start and start.time() == datetime.min.time() and not all_day:
+                legistar_event = self._find_matching_legistar_event(title, start.date())
+                if legistar_event:
+                    start = self._parse_legistar_start(legistar_event)
             meeting = Meeting(
                 title=title,
                 description="",
                 classification=self._parse_classification(title),
                 start=start,
-                end=self._parse_dt(attrs, "end_value"),
-                all_day=False,
+                end=end,
+                all_day=all_day,
                 time_notes="",
                 location=self._parse_location(attrs),
-                links=self._match_legistar_links(title, start),
+                links=links,
                 source=attrs.get("absolute_url") or self.legistar_url,
             )
             # Pass "cancelled" hint so _get_status() returns CANCELLED when the
@@ -245,20 +253,54 @@ class CharncMeckBocSpider(CityScrapersSpider):
     def _parse_location(self, attrs):
         addr = attrs.get("field_event_address") or {}
         if not isinstance(addr, dict):
-            return {"name": str(addr).strip(), "address": ""}
-        line1 = (addr.get("address_line1") or "").strip()
-        line2 = (addr.get("address_line2") or "").strip()
-        city = (addr.get("locality") or "").strip()
-        state = (addr.get("administrative_area") or "").strip()
-        postal = (addr.get("postal_code") or "").strip()
-        name_parts = [p for p in [line1, line2] if p]
-        city_parts = [p for p in [city, f"{state} {postal}".strip()] if p]
-        if city_parts:
-            name_parts.append(", ".join(city_parts))
-        return {"name": ", ".join(name_parts), "address": ""}
+            name = str(addr).strip()
+        else:
+            line1 = (addr.get("address_line1") or "").strip()
+            line2 = (addr.get("address_line2") or "").strip()
+            city = (addr.get("locality") or "").strip()
+            state = (addr.get("administrative_area") or "").strip()
+            postal = (addr.get("postal_code") or "").strip()
+            name_parts = [p for p in [line1, line2] if p]
+            city_parts = [p for p in [city, f"{state} {postal}".strip()] if p]
+            if city_parts:
+                name_parts.append(", ".join(city_parts))
+            name = ", ".join(name_parts)
+        return {"name": self._normalize_location_name(name), "address": ""}
 
-    def _match_legistar_links(self, title, start):
-        """Fuzzy-match title + date against Legistar to pull agenda/minutes links.
+    def _normalize_location_name(self, name):
+        """Normalize location names by fixing typos and standardizing formats."""
+        if not name:
+            return name
+        name = name.replace("Freedom Dive", "Freedom Drive")
+        name = name.replace("600v E. 4th St", "600 E. 4th St")
+        name = name.replace("600 E. 4st", "600 E. 4th St")
+        name = re.sub(r",\s*Charlotte\s*,\s*Charlotte", ", Charlotte", name)
+        name = re.sub(r",\s*NC\s*$", ", NC", name)
+        return name.strip()
+
+    def _clean_location_name(self, name):
+        """Strip editorial phrases and normalize line breaks in location names."""
+        if not name:
+            return name
+        # Replace line breaks with a comma separator, then collapse any resulting
+        # double-commas or trailing commas left by a trailing newline in the source.
+        name = re.sub(r"\r?\n", ", ", name)
+        name = re.sub(r",\s*,", ",", name)
+        name = name.strip(" ,")
+        for pattern in [r"\bREVISED AGENDA\b", r"\bREVISED\b", r"\bin-person\b"]:
+            name = re.sub(pattern, "", name, flags=re.IGNORECASE)
+        return self._normalize_location_name(name.strip())
+
+    def _is_all_day(self, start, end):
+        """Return True if the event spans a full day (00:00 to 23:59)."""
+        if not start or not end:
+            return False
+        return start.time() == datetime.min.time() and (
+            end.time().hour == 23 and end.time().minute == 59
+        )
+
+    def _find_matching_legistar_event(self, title, date):
+        """Return the first Legistar event fuzzy-matching title on date, or None.
 
         Requires ≥2 significant words in common, or that all words in the Legistar
         body name appear in the primary title. This prevents single-word matches
@@ -275,14 +317,19 @@ class CharncMeckBocSpider(CityScrapersSpider):
                     self._legistar_by_date.setdefault(s.date(), []).append(event)
 
         title_words = self._significant_words(title)
-        for legistar_event in self._legistar_by_date.get(start.date(), []):
-            legistar_words = self._significant_words(
-                legistar_event.get("EventBodyName", "")
-            )
+        for event in self._legistar_by_date.get(date, []):
+            legistar_words = self._significant_words(event.get("EventBodyName", ""))
             overlap = title_words & legistar_words
             if len(overlap) >= 2 or (legistar_words and legistar_words <= title_words):
-                self._matched_legistar_ids.add(legistar_event.get("EventId"))
-                return self._legistar_links(legistar_event)
+                return event
+        return None
+
+    def _match_legistar_links(self, title, start):
+        """Fuzzy-match title + date against Legistar to pull agenda/minutes links."""
+        legistar_event = self._find_matching_legistar_event(title, start.date())
+        if legistar_event:
+            self._matched_legistar_ids.add(legistar_event.get("EventId"))
+            return self._legistar_links(legistar_event)
         return []
 
     def _significant_words(self, text):
@@ -332,6 +379,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             # Only use if it looks like an address or room reference
             if first_line and _LOCATION_COMMENT_RE.search(first_line):
                 location_name = first_line
+        location_name = self._clean_location_name(location_name)
         meeting = Meeting(
             title=title,
             description=(event.get("EventComment") or "").strip(),
