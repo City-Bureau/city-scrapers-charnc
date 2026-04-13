@@ -30,6 +30,16 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
+        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+        "DOWNLOAD_HANDLERS": {
+            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+        },
+        "PLAYWRIGHT_BROWSER_TYPE": "firefox",
+        "PLAYWRIGHT_LAUNCH_OPTIONS": {
+            "headless": True,
+        },
+        "DOWNLOAD_DELAY": 1,
     }
 
     def start_requests(self):
@@ -60,10 +70,32 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 callback=self._parse_boarddocs_detail,
             )
 
-        yield scrapy.Request(
-            url=self.calendar_url,
-            callback=self._parse_calendar,
-        )
+        last_bd_date = dt_parse(self.last_boarddocs_date).date()
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        end_date = (today + relativedelta(months=self.months_ahead)).date()
+
+        current_date = last_bd_date + relativedelta(days=1)
+        current_date = current_date.replace(day=1)  # First day of month
+
+        while current_date <= end_date:
+            yield scrapy.Request(
+                url=self.calendar_url,
+                callback=self._parse_calendar,
+                dont_filter=True,
+                meta={
+                    "playwright": True,
+                    "playwright_page_methods": [
+                        {
+                            "method": "wait_for_selector",
+                            "args": ["a.fsCalendarEventLink"],
+                            "kwargs": {"timeout": 10000},
+                        },
+                    ],
+                    "target_month": current_date.month,
+                    "target_year": current_date.year,
+                },
+            )
+            current_date += relativedelta(months=1)
 
     def _filter_meetings_by_date(self, data):
         today = datetime.now(tz=ZoneInfo(self.timezone))
@@ -186,17 +218,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         return {"name": "", "address": ""}
 
     def _parse_calendar(self, response):
+        target_month = response.meta.get("target_month")
+        target_year = response.meta.get("target_year")
         last_bd_date = dt_parse(self.last_boarddocs_date).date()
-        today = datetime.now(tz=ZoneInfo(self.timezone))
-        end_date = (today + relativedelta(months=self.months_ahead)).date()
 
-        for event in response.css(".fsCalendarInfo, .fsCalendar"):
+        for event_link in response.css("a.fsCalendarEventLink"):
             try:
-                title_elem = (
-                    event.css(".fsCalendarEventTitle::text").get()
-                    or event.css("h3::text").get()
-                    or event.css(".fsTitle::text").get()
-                )
+                title_elem = event_link.css("::text").get()
 
                 if not title_elem:
                     continue
@@ -205,27 +233,37 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 if "board" not in title_lower:
                     continue
 
-                date_elem = (
-                    event.css(".fsStartDate::text").get()
-                    or event.css(".fsDate::text").get()
-                    or event.css("time::attr(datetime)").get()
-                )
-
-                if not date_elem:
+                # Parse data-occur-id: "94992228_2026-04-14T22:00:00Z_2026-04-15T01:00:00Z"
+                occur_id = event_link.css("::attr(data-occur-id)").get()
+                if not occur_id:
                     continue
+
+                parts = occur_id.split("_")
+                if len(parts) < 3:
+                    continue
+
+                start_iso = parts[1]  # 2026-04-14T22:00:00Z
+                end_iso = parts[2]  # 2026-04-15T01:00:00Z
 
                 try:
-                    event_date = dt_parse(date_elem).date()
-                except Exception:
+                    start = dt_parse(start_iso)
+                    # Convert from UTC to local time
+                    start = start.replace(tzinfo=None)
+                except Exception as e:
+                    self.logger.warning(f"Failed to parse start time {start_iso}: {e}")
                     continue
 
-                if event_date <= last_bd_date or event_date > end_date:
+                # Filter: only meetings after last BoardDocs date
+                if start.date() <= last_bd_date:
                     continue
 
-                time_elem = event.css(".fsStartTime::text").get()
-                start = self._parse_calendar_datetime(date_elem, time_elem)
+                # Filter: only meetings in target month (if specified)
+                if target_month and target_year:
+                    if start.month != target_month or start.year != target_year:
+                        continue
 
-                if not start:
+                event = event_link.css("::attr(href)").get()
+                if not event:
                     continue
 
                 title = self._parse_title(title_elem)
