@@ -82,6 +82,15 @@ class CharncMeckPdSpider(CityScrapersSpider):
 
         description = response.meta.get("description", "")
 
+        # Add notice if location is missing or event is virtual
+        if not location.get("address") or "virtual" in title.lower():
+            notice = "Check the source URL for officer contact information or meeting details."  # noqa
+            if description:
+                description = description.rstrip(".").strip()
+                description = f"{description}. {notice}"
+            else:
+                description = notice
+
         items = response.css("li.multi-date-item")
 
         if not items:
