@@ -14,35 +14,6 @@ from city_scrapers_core.constants import (
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 
-_STOP_WORDS = frozenset(
-    ["a", "an", "and", "at", "for", "in", "meeting", "meetings", "of", "the", "to"]
-)
-
-_BROWSER_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-
-# Compiled at module level — not inside per-item methods — for performance.
-_CLEAN_TITLE_RE = re.compile(
-    r"^(will\s+not\s+be\s+held|postponed|canceled|cancelled|rescheduled)"
-    r"(\s+due\s+to\s+\w+)?"
-    r"[\s:,\-]*",
-    re.IGNORECASE,
-)
-_SIGNIFICANT_WORDS_RE = re.compile(r"[^a-z0-9\s]")
-_CANCELLED_PATTERNS = re.compile(
-    r"will\s+not\s+be\s+held|cancelled|canceled|postponed|rescheduled",
-    re.IGNORECASE,
-)
-
-_SINCE_YEAR = 2022
-
-_LOCATION_COMMENT_RE = re.compile(
-    r"(\d|room|suite|floor|ave|st\b|blvd|dr\b|rd\b|hwy|bldg|govt|government center)",
-    re.IGNORECASE,
-)
-
 
 class CharncMeckBocSpider(CityScrapersSpider):
     name = "charnc_meck_boc"
@@ -54,10 +25,46 @@ class CharncMeckBocSpider(CityScrapersSpider):
     legistar_api = "https://webapi.legistar.com/v1/mecklenburg/events"
     legistar_page_size = 1000
     primary_page_size = 50
-    since_year = _SINCE_YEAR
+    since_year = 2022
     _tz = ZoneInfo("America/New_York")
 
     custom_settings = {"ROBOTSTXT_OBEY": False}
+
+    _browser_ua = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+    _stop_words = frozenset(
+        [
+            "a",
+            "an",
+            "and",
+            "at",
+            "for",
+            "in",
+            "meeting",
+            "meetings",
+            "of",
+            "the",
+            "to",
+        ]
+    )
+    _clean_title_re = re.compile(
+        r"^(will\s+not\s+be\s+held|postponed|canceled|cancelled|rescheduled)"
+        r"(\s+due\s+to\s+\w+)?"
+        r"[\s:,\-]*",
+        re.IGNORECASE,
+    )
+    _significant_words_re = re.compile(r"[^a-z0-9\s]")
+    _cancelled_patterns = re.compile(
+        r"will\s+not\s+be\s+held|cancelled|canceled|postponed|rescheduled",
+        re.IGNORECASE,
+    )
+    _location_comment_re = re.compile(
+        r"(\d|room|suite|floor|ave|st\b|blvd|dr\b|rd\b|hwy|bldg|govt|government"
+        r" center)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -125,7 +132,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             yield scrapy.Request(
                 url,
                 headers={
-                    "User-Agent": _BROWSER_UA,
+                    "User-Agent": self._browser_ua,
                     "Accept": "application/vnd.api+json",
                 },
                 callback=self.parse,
@@ -179,7 +186,9 @@ class CharncMeckBocSpider(CityScrapersSpider):
             )
             # Pass "cancelled" hint so _get_status() returns CANCELLED when the
             # raw title contained a cancellation phrase that was stripped for display.
-            cancel_text = "cancelled" if _CANCELLED_PATTERNS.search(raw_title) else ""
+            cancel_text = (
+                "cancelled" if self._cancelled_patterns.search(raw_title) else ""
+            )
             meeting["status"] = self._get_status(meeting, text=cancel_text)
             meeting["id"] = self._get_id(meeting)
             if meeting["id"] in self._seen_ids:
@@ -194,7 +203,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             yield scrapy.Request(
                 next_href,
                 headers={
-                    "User-Agent": _BROWSER_UA,
+                    "User-Agent": self._browser_ua,
                     "Accept": "application/vnd.api+json",
                 },
                 callback=self.parse,
@@ -226,7 +235,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
 
     def _clean_title(self, title):
         """Strip whitespace and remove leading cancellation prefixes."""
-        return _CLEAN_TITLE_RE.sub("", title.strip()).strip()
+        return self._clean_title_re.sub("", title.strip()).strip()
 
     def _is_non_meeting(self, title):
         """Return True for non-meeting events such as office closure notices."""
@@ -333,8 +342,8 @@ class CharncMeckBocSpider(CityScrapersSpider):
         return []
 
     def _significant_words(self, text):
-        words = set(_SIGNIFICANT_WORDS_RE.sub(" ", text.lower()).split())
-        return words - _STOP_WORDS
+        words = set(self._significant_words_re.sub(" ", text.lower()).split())
+        return words - self._stop_words
 
     def _parse_legistar_start(self, event):
         date_str = event.get("EventDate", "")
@@ -377,7 +386,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             comment = (event.get("EventComment") or "").strip()
             first_line = comment.splitlines()[0].strip() if comment else ""
             # Only use if it looks like an address or room reference
-            if first_line and _LOCATION_COMMENT_RE.search(first_line):
+            if first_line and self._location_comment_re.search(first_line):
                 location_name = first_line
         location_name = self._clean_location_name(location_name)
         meeting = Meeting(
@@ -392,7 +401,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             links=self._legistar_links(event),
             source=event.get("EventInSiteURL") or self.legistar_url,
         )
-        cancel_text = "cancelled" if _CANCELLED_PATTERNS.search(raw_title) else ""
+        cancel_text = "cancelled" if self._cancelled_patterns.search(raw_title) else ""
         meeting["status"] = self._get_status(meeting, text=cancel_text)
         meeting["id"] = self._get_id(meeting)
         return meeting

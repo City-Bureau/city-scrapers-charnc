@@ -32,11 +32,7 @@ from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 from scrapy.http import TextResponse
 
-from city_scrapers.spiders.charnc_meck_boc import (
-    _BROWSER_UA,
-    _CANCELLED_PATTERNS,
-    CharncMeckBocSpider,
-)
+from city_scrapers.spiders.charnc_meck_boc import CharncMeckBocSpider
 
 # ---------------------------------------------------------------------------
 # Module-level fixtures
@@ -557,8 +553,8 @@ def test_classification_variants(title, expected):
     ],
 )
 def test_cancellation_keywords_detected(raw_title):
-    """_CANCELLED_PATTERNS must match all cancellation phrase variants."""
-    assert _CANCELLED_PATTERNS.search(raw_title) is not None
+    """_cancelled_patterns must match all cancellation phrase variants."""
+    assert CharncMeckBocSpider._cancelled_patterns.search(raw_title) is not None
 
 
 # --- _parse_dt ---
@@ -1086,7 +1082,8 @@ def test_legistar_pagination_ends():
     requests = [r for r in results if hasattr(r, "url")]
     assert len(requests) == 1
     assert "calendar.mecknc.gov" in requests[0].url
-    assert requests[0].headers.get("User-Agent") == _BROWSER_UA.encode()
+    expected_ua = CharncMeckBocSpider._browser_ua.encode()
+    assert requests[0].headers.get("User-Agent") == expected_ua
     assert requests[0].headers.get("Accept") == b"application/vnd.api+json"
     assert len(s.legistar_events) == 3
 
@@ -1156,7 +1153,8 @@ def test_parse_yields_next_page_request():
     requests = [r for r in results if hasattr(r, "url")]
     assert len(requests) == 1
     assert requests[0].url == next_url
-    assert requests[0].headers.get("User-Agent") == _BROWSER_UA.encode()
+    expected_ua = CharncMeckBocSpider._browser_ua.encode()
+    assert requests[0].headers.get("User-Agent") == expected_ua
     assert requests[0].headers.get("Accept") == b"application/vnd.api+json"
 
 
