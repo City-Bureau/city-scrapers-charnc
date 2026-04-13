@@ -141,33 +141,57 @@ class CharncMeckPdSpider(CityScrapersSpider):
         return title
 
     def _parse_location(self, response):
-        raw = " ".join(
-            response.xpath(
-                "//h2[contains(@class,'sub-title') and contains(text(),'Location')]"
-                "/following-sibling::p[1]//text()"
-            ).getall()
-        ).strip()
+        location_section = response.xpath(
+            "//h2[contains(@class,'sub-title') and contains(text(),'Location')]"
+        )
 
-        raw = re.sub(r"View Map", "", raw, flags=re.IGNORECASE)
-        raw = raw.replace("\xa0", " ")
-        raw = re.sub(r"\s+", " ", raw).strip().strip(",").strip()
+        if not location_section:
+            return {"name": "", "address": ""}
 
-        return self._split_location(raw)
+        all_p = location_section.xpath("following-sibling::p")
+        map_p = all_p.xpath("self::p[.//a[contains(text(),'View Map')]]")
 
-    def _split_location(self, raw):
+        if not map_p:
+            return {"name": "", "address": ""}
+
+        # Extract text nodes from map <p> (excludes the link text)
+        raw = " ".join(map_p.xpath("text()").getall())
+        raw = re.sub(r"\s+", " ", raw.replace("\xa0", " ")).strip().strip(",").strip()
+
+        # Splitting name and address from the map <p> text
+        result = self._split_name_address(raw)
+
+        # If no name found in map <p>, fall back to preceding <p> after Location h2
+        if not result["name"]:
+            name_p = map_p.xpath(
+                "preceding-sibling::p[not(@class)]"
+                "[preceding-sibling::h2[contains(@class,'sub-title') and contains(text(),'Location')]]"  # noqa
+                "[1]"
+            )
+            if name_p:
+                name = " ".join(name_p.xpath(".//text()").getall())
+                name = (
+                    re.sub(r"\s+", " ", name.replace("\xa0", " "))
+                    .strip()
+                    .strip(",")
+                    .strip()
+                )
+                result["name"] = name
+
+        return result
+
+    def _split_name_address(self, raw):
         if not raw:
             return {"name": "", "address": ""}
 
         parts = [p.strip() for p in raw.split(",")]
 
-        # Check if first part looks like an address (starts with a number)
-        if re.match(r"^\d+", parts[0]):
-            return {"name": "", "address": raw}
+        # Find the first part that looks like a street number
+        for i, part in enumerate(parts):
+            if re.match(r"^\d+", part.strip()):
+                name = ", ".join(parts[:i]).strip().strip(",").strip()
+                address = ", ".join(parts[i:]).strip().strip(",").strip()
+                return {"name": name, "address": address}
 
-        if len(parts) >= 2:
-            return {
-                "name": parts[0],
-                "address": ", ".join(parts[1:]),
-            }
-
+        # No address pattern found — everything is a name
         return {"name": raw, "address": ""}
