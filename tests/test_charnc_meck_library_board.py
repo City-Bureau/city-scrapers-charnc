@@ -82,11 +82,11 @@ def test_source(parsed_items):
 
 def test_links(parsed_items):
     agenda_href = (
-        "https://cmlibrary.org/sites/default/files/2026-02/"
+        "https://www.cmlibrary.org/sites/default/files/2026-02/"
         "Board%20Meeting%20Agenda%2001.20.26.pdf"
     )
     minutes_href = (
-        "https://cmlibrary.org/sites/default/files/2026-02/"
+        "https://www.cmlibrary.org/sites/default/files/2026-02/"
         "Attachment%20%231%20January%2020th%20BOT%20Meeting%20Minutes.pdf"
     )
     assert parsed_items[0]["links"] == [
