@@ -84,7 +84,7 @@ class CharncMeckPdSpider(CityScrapersSpider):
 
         # Add notice if location is missing or event is virtual
         if not location.get("address") or "virtual" in title.lower():
-            notice = "Check the source URL for officer contact information or meeting details."  # noqa
+            notice = "Please check the source URL for more details about this meeting."  # noqa
             if description:
                 description = description.rstrip(".").strip()
                 description = f"{description}. {notice}"
