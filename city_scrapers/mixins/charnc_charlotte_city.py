@@ -13,12 +13,12 @@ from collections import defaultdict
 from datetime import datetime
 from difflib import SequenceMatcher
 from html import unescape
-from urllib.parse import parse_qs, quote, urlencode
+from urllib.parse import quote
 
 import scrapy
 from city_scrapers_core.constants import CANCELLED, NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
-from city_scrapers_core.spiders import CityScrapersSpider
+from city_scrapers_core.spiders import LegistarSpider
 from dateutil.parser import parse as dateparser
 
 
@@ -56,7 +56,7 @@ class CharlotteCityMixinMeta(type):
 
 
 class CharncCharlotteCitySpiderMixin(
-    CityScrapersSpider, metaclass=CharlotteCityMixinMeta
+        LegistarSpider, metaclass=CharlotteCityMixinMeta
 ):
     timezone = "America/New_York"
     upcoming_meetings_url = (
@@ -66,15 +66,16 @@ class CharncCharlotteCitySpiderMixin(
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
     }
+    start_urls = ["https://charlottenc.legistar.com/Calendar.aspx"]
     since_year = 2023
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.since_year = 2023
         self._legistar_by_start = defaultdict(list)
         self._pending_details = 0
         self._primary_pages_done = False
         self._unmatched_yielded = False
-        self._scraped_urls = set()
         self._pending_legistar_years = 0
         self._primary_started = False
 
@@ -101,157 +102,14 @@ class CharncCharlotteCitySpiderMixin(
     def start_requests(self):
         yield scrapy.Request(
             url=self.past_meetings_url,
-            callback=self.parse_legistar_years,
+            callback=self.parse,
         )
 
-    def parse_legistar_years(self, response):
-        """
-        Start Legistar year dropdown POST requests for each year from since_year
-        through the current year.
-        """
-        secrets = self._parse_legistar_secrets(response)
+    def parse(self, response):
         current_year = datetime.now().year
-        years = list(range(self.since_year, current_year + 1))
-        self._pending_legistar_years = len(years)
-
-        for year in years:
-            yield scrapy.Request(
-                response.url,
-                method="POST",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                body=urlencode(
-                    {
-                        **secrets,
-                        "__EVENTTARGET": "ctl00$ContentPlaceHolder1$lstYears",
-                        "ctl00_ContentPlaceHolder1_lstYears_ClientState": (
-                            f'{{"value":"{year}"}}'
-                        ),
-                    }
-                ),
-                callback=self.parse_legistar,
-                meta={"legistar_year": year},
-                dont_filter=True,
-            )
-
-    def _parse_legistar_secrets(self, response):
-        """
-        Extract ASP.NET hidden form values needed for Legistar postbacks.
-        """
-        secrets = {
-            "__EVENTARGUMENT": None,
-            "__VIEWSTATE": response.css("[name='__VIEWSTATE']::attr(value)").get(),
-        }
-        event_validation = response.css("[name='__EVENTVALIDATION']::attr(value)").get()
-        if event_validation:
-            secrets["__EVENTVALIDATION"] = event_validation
-        return secrets
-
-    def _parse_legistar_rows(self, response):
-        """
-        Parse the Legistar table rows from the current response and store matched
-        meetings in self._legistar_by_start.
-        """
-        rows = response.css(
-            "table.rgMasterTable > tbody > tr.rgRow, "
-            "table.rgMasterTable > tbody > tr.rgAltRow"
-        )
-
-        for item in rows:
-            body = " ".join(
-                part.strip()
-                for part in item.css("td:nth-child(1) a *::text").getall()
-                if part.strip()
-            )
-
-            if not self._legistar_matches_body(body):
-                continue
-
-            date = item.css("td:nth-child(2) *::text").get(default="").strip()
-            time = " ".join(
-                part.strip()
-                for part in item.css("td:nth-child(4) *::text").getall()
-                if part.strip()
-            )
-            raw = f"{date} {time}" if time else date
-
-            start = self._safe_parse_datetime(raw)
-            if not start or not self._is_within_scrape_range(start):
-                continue
-
-            location = " ".join(
-                part.strip()
-                for part in item.css("td:nth-child(5) *::text").getall()
-                if part.strip()
-            )
-
-            links = []
-
-            def add_link(selector, title):
-                href = item.css(selector + "::attr(href)").get()
-                if href:
-                    links.append({"href": response.urljoin(href), "title": title})
-
-            add_link("td:nth-child(7) a", "Agenda")
-
-            minutes = item.css("td:nth-child(8) a::attr(href)").get()
-            if minutes:
-                links.append({"href": response.urljoin(minutes), "title": "Minutes"})
-
-            video_js = item.css("td:nth-child(9) a::attr(onclick)").get()
-            video_url = self._extract_js_url(video_js)
-            if video_url:
-                links.append({"href": response.urljoin(video_url), "title": "Video"})
-
-            ical_url = item.css("td a[href*='View.ashx?M=IC']::attr(href)").get()
-            if ical_url:
-                ical_url = response.urljoin(ical_url)
-                if ical_url in self._scraped_urls:
-                    continue
-                self._scraped_urls.add(ical_url)
-            else:
-                dedupe_key = f"{self._normalize(body)}|{start.isoformat()}"
-                if dedupe_key in self._scraped_urls:
-                    continue
-                self._scraped_urls.add(dedupe_key)
-
-            self._legistar_by_start[start].append(
-                {
-                    "title": body,
-                    "location": {
-                        "name": location,
-                        "address": "600 East 4th Street, Charlotte, NC 28202",
-                    },
-                    "links": self._dedupe_links(links),
-                    "source": response.url,
-                }
-            )
-
-    def _parse_legistar_next_page(self, response):
-        """
-        Follow Legistar pagination for the currently selected year using ASP.NET
-        postback payload.
-        """
-        next_page_link = response.css("a.rgCurrentPage + a")
-        if len(next_page_link) == 0:
-            return
-
-        event_target = next_page_link.css("::attr(href)").re_first(r"'([^']+)'")
-        request_body = response.request.body.decode("utf-8")
-        next_page_payload = {
-            **parse_qs(request_body),
-            **self._parse_legistar_secrets(response),
-            "__EVENTTARGET": event_target,
-        }
-
-        yield scrapy.Request(
-            response.url,
-            method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            body=urlencode(next_page_payload, doseq=True),
-            callback=self.parse_legistar,
-            meta=response.meta,
-            dont_filter=True,
-        )
+        self._pending_legistar_years = len(range(self.since_year, current_year + 1))
+        yield from super().parse(response)
+    
 
     def _start_primary_if_ready(self):
         """
@@ -358,16 +216,123 @@ class CharncCharlotteCitySpiderMixin(
             self._unmatched_yielded = True
             yield from self._yield_unmatched_legistar()
 
-    def parse_legistar(self, response):
-        """
-        Parse one Legistar year page, follow pagination, and only start the primary
-        source after all Legistar years are finished.
-        """
-        self._parse_legistar_rows(response)
+    def parse_legistar(self, events):
+        for item in events:
+            body = self._get_legistar_body(item)
 
-        next_page_link = response.css("a.rgCurrentPage + a")
-        if len(next_page_link) > 0:
-            yield from self._parse_legistar_next_page(response)
+            if not self._legistar_matches_body(body):
+                continue
+
+            start = self.legistar_start(item)
+            if not start or not self._is_within_scrape_range(start):
+                continue
+
+            location_text = self._get_legistar_location(item)
+            links = self._dedupe_links(self.legistar_links(item))
+            source = self.legistar_source(item)
+
+            self._legistar_by_start[start].append(
+                {
+                    "title": body,
+                    "location": {
+                        "name": location_text,
+                        "address": "600 East 4th Street, Charlotte, NC 28202",
+                    },
+                    "links": links,
+                    "source": source,
+                }
+            )
+
+    def _parse_legistar_events(self, response):
+        events_table = response.css("table.rgMasterTable")[0]
+
+        headers = []
+        for header in events_table.css("th[class^='rgHeader']"):
+            header_text = (
+                " ".join(header.css("*::text").extract())
+                .replace("&nbsp;", " ")
+                .strip()
+            )
+            header_inputs = header.css("input")
+            if header_text:
+                headers.append(header_text)
+            elif len(header_inputs) > 0:
+                headers.append(header_inputs[0].attrib["value"])
+            else:
+                headers.append(header.css("img")[0].attrib["alt"])
+
+        events = []
+        for row in events_table.css("tr.rgRow, tr.rgAltRow"):
+            try:
+                data = defaultdict(lambda: None)
+                for header, field in zip(headers, row.css("td")):
+                    field_text = (
+                        " ".join(field.css("*::text").extract())
+                        .replace("&nbsp;", " ")
+                        .strip()
+                    )
+                    url = None
+                    if len(field.css("a")) > 0:
+                        link_el = field.css("a")[0]
+                        onclick = link_el.attrib.get("onclick", "").strip()
+                        if onclick and onclick.startswith(
+                            ("radopen('", "window.open", "OpenTelerikWindow")
+                        ):
+                            url = response.urljoin(onclick.split("'")[1])
+                        elif "href" in link_el.attrib:
+                            url = response.urljoin(link_el.attrib["href"])
+                    if url:
+                        if header in ["", "ics"] and "View.ashx?M=IC" in url:
+                            header = "iCalendar"
+                            value = {"url": url}
+                        else:
+                            value = {"label": field_text, "url": url}
+                    else:
+                        value = field_text
+
+                    data[header] = value
+
+                ical_url = data.get("iCalendar", {}).get("url")
+                if ical_url:
+                    if ical_url in self._scraped_urls:
+                        continue
+                    self._scraped_urls.add(ical_url)
+
+                events.append(dict(data))
+            except Exception:
+                pass
+
+        return events
+
+    def _get_legistar_body(self, item):
+        for key in ["Name", "Meeting Details", "Body", "Title"]:
+            value = item.get(key)
+            if isinstance(value, dict):
+                label = value.get("label", "").strip()
+                if label:
+                    return label
+            elif isinstance(value, str):
+                value = value.strip()
+                if value:
+                    return value
+        return ""
+
+    def _get_legistar_location(self, item):
+        for key in ["Meeting Location", "Location"]:
+            value = item.get(key)
+            if isinstance(value, dict):
+                return value.get("label", "").strip()
+            if isinstance(value, str):
+                return value.strip()
+        return ""
+
+    def _parse_legistar_events_page(self, response):
+        legistar_events = self._parse_legistar_events(response)
+        self.parse_legistar(legistar_events)
+
+        next_requests = list(self._parse_next_page(response))
+        if next_requests:
+            yield from next_requests
             return
 
         self._pending_legistar_years -= 1
@@ -375,6 +340,11 @@ class CharncCharlotteCitySpiderMixin(
         primary_request = self._start_primary_if_ready()
         if primary_request:
             yield primary_request
+    
+    def _parse_legistar_rows(self, response):
+        """Parse Legistar HTML into _legistar_by_start (used by tests)."""
+        legistar_events = self._parse_legistar_events(response)
+        self.parse_legistar(legistar_events)
 
     def _yield_unmatched_legistar(self):
         """Yield Legistar meetings that had no primary match."""
@@ -505,63 +475,48 @@ class CharncCharlotteCitySpiderMixin(
                 ...
             ]
         """
+        seen = set()
         occurrences = []
 
-        for li in response.css("ul.multi-date-list li.multi-date-item"):
-            year = li.attrib.get("data-start-year", "").strip()
-            month = li.attrib.get("data-start-month", "").strip()
-            day = li.attrib.get("data-start-day", "").strip()
+        for item in response.css("li.multi-date-item"):
+            start = self._parse_item_dt(item, "start")
+            end = self._parse_item_dt(item, "end")
 
-            text = " ".join(
-                part.strip() for part in li.css("*::text").getall() if part.strip()
-            )
+            if not start or not self._is_within_scrape_range(start):
+                continue
 
-            start_dt = None
-            end_dt = None
-
-            if year and month and day:
-                date_str = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-
-                time_part = ""
-                if "|" in text:
-                    time_part = text.split("|", 1)[1].strip()
-
-                if time_part and "-" in time_part:
-                    start_time_str, end_time_str = [
-                        part.strip() for part in time_part.split("-", 1)
-                    ]
-                    start_dt = self._safe_parse_datetime(f"{date_str} {start_time_str}")
-                    end_dt = self._safe_parse_datetime(f"{date_str} {end_time_str}")
-
-                elif time_part:
-                    start_dt = self._safe_parse_datetime(f"{date_str} {time_part}")
-
-                else:
-                    start_dt = self._safe_parse_datetime(date_str)
-
-            if not start_dt:
-                start_dt = self._safe_parse_datetime(text)
-
-            if start_dt and self._is_within_scrape_range(start_dt):
-                occurrences.append(
-                    {
-                        "start": start_dt,
-                        "end": end_dt,
-                    }
-                )
-
-        seen = set()
-        deduped = []
-        for occ in occurrences:
-            key = (
-                occ["start"].isoformat() if occ["start"] else None,
-                occ["end"].isoformat() if occ["end"] else None,
-            )
+            key = (start, end)
             if key not in seen:
                 seen.add(key)
-                deduped.append(occ)
+                occurrences.append({"start": start, "end": end})
 
-        return deduped
+        return occurrences
+
+    def _parse_item_dt(self, item, prefix):
+        """
+        Extract a datetime from data-{prefix}-year/month/day attributes
+        and inline time text (e.g. "06:00 PM - 07:30 PM").
+        """
+        try:
+            year = int(item.attrib.get(f"data-{prefix}-year", 0))
+            month = int(item.attrib.get(f"data-{prefix}-month", 0))
+            day = int(item.attrib.get(f"data-{prefix}-day", 0))
+
+            if not all([year, month, day]):
+                return None
+
+            text = " ".join(item.css("::text").getall())
+            times = re.findall(r"\d{1,2}:\d{2}\s*[AP]M", text, re.I)
+
+            idx = 0 if prefix == "start" else 1
+            if len(times) > idx:
+                t = datetime.strptime(times[idx].strip(), "%I:%M %p")
+                return datetime(year, month, day, t.hour, t.minute)
+
+            return datetime(year, month, day)
+
+        except (ValueError, TypeError):
+            return None
 
     def _parse_primary_detail_start(self, response):
         """
