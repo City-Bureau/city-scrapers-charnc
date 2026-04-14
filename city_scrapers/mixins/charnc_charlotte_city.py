@@ -55,9 +55,7 @@ class CharlotteCityMixinMeta(type):
         super().__init__(name, bases, dct)
 
 
-class CharncCharlotteCitySpiderMixin(
-        LegistarSpider, metaclass=CharlotteCityMixinMeta
-):
+class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixinMeta):
     timezone = "America/New_York"
     upcoming_meetings_url = (
         "https://www.charlottenc.gov/City-Government/Council-Meetings/Upcoming-Meetings"
@@ -66,7 +64,6 @@ class CharncCharlotteCitySpiderMixin(
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
     }
-    start_urls = ["https://charlottenc.legistar.com/Calendar.aspx"]
     since_year = 2023
 
     def __init__(self, *args, **kwargs):
@@ -109,7 +106,6 @@ class CharncCharlotteCitySpiderMixin(
         current_year = datetime.now().year
         self._pending_legistar_years = len(range(self.since_year, current_year + 1))
         yield from super().parse(response)
-    
 
     def _start_primary_if_ready(self):
         """
@@ -229,7 +225,7 @@ class CharncCharlotteCitySpiderMixin(
 
             location_text = self._get_legistar_location(item)
             links = self._dedupe_links(self.legistar_links(item))
-            source = self.legistar_source(item)
+            source = self.past_meetings_url
 
             self._legistar_by_start[start].append(
                 {
@@ -249,9 +245,7 @@ class CharncCharlotteCitySpiderMixin(
         headers = []
         for header in events_table.css("th[class^='rgHeader']"):
             header_text = (
-                " ".join(header.css("*::text").extract())
-                .replace("&nbsp;", " ")
-                .strip()
+                " ".join(header.css("*::text").extract()).replace("&nbsp;", " ").strip()
             )
             header_inputs = header.css("input")
             if header_text:
@@ -340,7 +334,7 @@ class CharncCharlotteCitySpiderMixin(
         primary_request = self._start_primary_if_ready()
         if primary_request:
             yield primary_request
-    
+
     def _parse_legistar_rows(self, response):
         """Parse Legistar HTML into _legistar_by_start (used by tests)."""
         legistar_events = self._parse_legistar_events(response)
