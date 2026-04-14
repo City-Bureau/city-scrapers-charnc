@@ -26,23 +26,18 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     boarddocs_committee_id = "A4EP6J588C05"
 
     calendar_url = "https://www.cmsk12.org/board/calendar-for-the-board-of-education"
+    calendar_api_url = "https://www.cmsk12.org/fs/elements/236115"
+    calendar_page_id = "29911"
+    calendar_parent_id = "236115"
     last_boarddocs_date = "2026-04-17"
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
-        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
-        "DOWNLOAD_HANDLERS": {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-        },
-        "PLAYWRIGHT_BROWSER_TYPE": "firefox",
-        "PLAYWRIGHT_LAUNCH_OPTIONS": {
-            "headless": True,
-        },
         "DOWNLOAD_DELAY": 1,
     }
 
     def start_requests(self):
+        # Scrape BoardDocs for historical and current meetings
         random_digit = random.randint(10**14, 10**15 - 1)
         yield scrapy.Request(
             url=self.boarddocs_api_url.format(random_digit=random_digit),
@@ -51,6 +46,42 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             callback=self._parse_boarddocs_list,
             meta={"source": "boarddocs"},
         )
+
+        # Scrape calendar API for future meetings after last BoardDocs date
+        # Use Finalsite calendar API to get events month by month
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        last_bd_date = dt_parse(self.last_boarddocs_date).date()
+
+        # Start from month containing day after last BoardDocs date
+        start_date = (last_bd_date + relativedelta(days=1)).replace(day=1)
+        # End date: 3 months ahead as per user rules
+        end_date = (today + relativedelta(months=self.months_ahead)).date()
+
+        # Generate requests for each month in the range
+        current_date = start_date
+        while current_date <= end_date:
+            # Format: YYYY-MM-01
+            cal_date = current_date.strftime("%Y-%m-01")
+            cache_buster = random.randint(10**12, 10**13 - 1)
+
+            calendar_api_url = (
+                f"{self.calendar_api_url}?"
+                f"is_draft=false&"
+                f"cal_date={cal_date}&"
+                f"is_load_more=true&"
+                f"page_id={self.calendar_page_id}&"
+                f"parent_id={self.calendar_parent_id}&"
+                f"_={cache_buster}"
+            )
+
+            yield scrapy.Request(
+                url=calendar_api_url,
+                callback=self._parse_calendar,
+                meta={"cal_date": current_date},
+            )
+
+            # Move to next month
+            current_date = current_date + relativedelta(months=1)
 
     def _parse_boarddocs_list(self, response):
         meetings = response.json()
@@ -69,33 +100,6 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 meta={"meeting_id": meeting_id},
                 callback=self._parse_boarddocs_detail,
             )
-
-        last_bd_date = dt_parse(self.last_boarddocs_date).date()
-        today = datetime.now(tz=ZoneInfo(self.timezone))
-        end_date = (today + relativedelta(months=self.months_ahead)).date()
-
-        current_date = last_bd_date + relativedelta(days=1)
-        current_date = current_date.replace(day=1)  # First day of month
-
-        while current_date <= end_date:
-            yield scrapy.Request(
-                url=self.calendar_url,
-                callback=self._parse_calendar,
-                dont_filter=True,
-                meta={
-                    "playwright": True,
-                    "playwright_page_methods": [
-                        {
-                            "method": "wait_for_selector",
-                            "args": ["a.fsCalendarEventLink"],
-                            "kwargs": {"timeout": 10000},
-                        },
-                    ],
-                    "target_month": current_date.month,
-                    "target_year": current_date.year,
-                },
-            )
-            current_date += relativedelta(months=1)
 
     def _filter_meetings_by_date(self, data):
         today = datetime.now(tz=ZoneInfo(self.timezone))
@@ -116,6 +120,9 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             except (ValueError, KeyError) as e:
                 self.logger.warning(f"Failed to parse date from item: {e}")
                 continue
+
+        # Sort chronologically by numberdate
+        filtered_data.sort(key=lambda x: x.get("numberdate", ""))
         return filtered_data
 
     def _parse_boarddocs_detail(self, response):
@@ -218,86 +225,104 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         return {"name": "", "address": ""}
 
     def _parse_calendar(self, response):
-        target_month = response.meta.get("target_month")
-        target_year = response.meta.get("target_year")
+        # Get date filtering info
         last_bd_date = dt_parse(self.last_boarddocs_date).date()
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        end_date = (today + relativedelta(months=self.months_ahead)).date()
 
-        for event_link in response.css("a.fsCalendarEventLink"):
+        # Select calendar events from API response
+        all_events = response.css("div.fsCalendarEvent")
+        self.logger.info(f"Found {len(all_events)} calendar events")
+
+        # Collect meetings first, then sort before yielding
+        meetings = []
+        for event_article in all_events:
             try:
+                # Get the event link (not the "Read More" link)
+                event_links = event_article.css("a.fsCalendarEventLink")
+                if not event_links:
+                    continue
+                event_link = event_links[0]
+
                 title_elem = event_link.css("::text").get()
-
                 if not title_elem:
+                    self.logger.debug("Skipping event with no title")
                     continue
 
-                title_lower = title_elem.lower()
-                if "board" not in title_lower:
+                # Skip "Read More" links
+                if title_elem.strip().lower() == "read more":
                     continue
 
-                # Parse data-occur-id: "94992228_2026-04-14T22:00:00Z_2026-04-15T01:00:00Z"
+                # Parse data-occur-id format: eventId_startISO_endISO
                 occur_id = event_link.css("::attr(data-occur-id)").get()
                 if not occur_id:
+                    self.logger.warning(f"No occur_id for event: {title_elem}")
                     continue
 
                 parts = occur_id.split("_")
                 if len(parts) < 3:
+                    self.logger.warning(f"Invalid occur_id format: {occur_id}")
                     continue
 
-                start_iso = parts[1]  # 2026-04-14T22:00:00Z
-                end_iso = parts[2]  # 2026-04-15T01:00:00Z
+                start_iso = parts[1]
+                end_iso = parts[2]
 
+                # Parse start and end times
                 try:
-                    start = dt_parse(start_iso)
-                    # Convert from UTC to local time
-                    start = start.replace(tzinfo=None)
+                    start = dt_parse(start_iso).replace(tzinfo=None)
+                    end = dt_parse(end_iso).replace(tzinfo=None)
                 except Exception as e:
-                    self.logger.warning(f"Failed to parse start time {start_iso}: {e}")
+                    self.logger.warning(f"Failed to parse times from {occur_id}: {e}")
                     continue
 
                 # Filter: only meetings after last BoardDocs date
                 if start.date() <= last_bd_date:
                     continue
 
-                # Filter: only meetings in target month (if specified)
-                if target_month and target_year:
-                    if start.month != target_month or start.year != target_year:
-                        continue
-
-                event = event_link.css("::attr(href)").get()
-                if not event:
+                # Filter: only meetings within date range
+                if start.date() > end_date:
                     continue
 
-                title = self._parse_title(title_elem)
-                description = " ".join(
-                    event.css(
-                        ".fsCalendarEventDescription::text, .fsBody::text"
-                    ).getall()
-                ).strip()
-                location_text = (
-                    event.css(".fsLocation::text").get()
-                    or event.css(".fsVenue::text").get()
-                    or ""
-                )
+                # Extract event URL if available
+                event_url = event_link.css("::attr(href)").get() or ""
 
+                title = self._parse_title(title_elem)
+
+                # Extract location if available
+                location_text = event_article.css("div.fsLocation::text").get()
+                if location_text:
+                    location = self._parse_calendar_location(location_text)
+                else:
+                    location = {"name": "", "address": ""}
+
+                # For calendar events, we only have basic info from list view
                 meeting = Meeting(
                     title=title,
-                    description=description,
+                    description="",
                     classification=BOARD,
                     start=start,
-                    end=None,
+                    end=end,
                     all_day=False,
                     time_notes="",
-                    location=self._parse_calendar_location(location_text),
-                    links=[],
-                    source=response.url,
+                    location=location,
+                    links=[{"title": "Event", "href": event_url}] if event_url else [],
+                    source=self.calendar_url,
                 )
 
-                meeting["status"] = self._get_status(meeting, text=description)
+                meeting["status"] = self._get_status(meeting)
                 meeting["id"] = self._get_id(meeting)
 
-                yield meeting
+                meetings.append(meeting)
+                self.logger.debug(f"Parsed calendar event: {title} on {start}")
 
             except Exception as e:
                 self.logger.error(f"Failed to parse calendar event: {e}", exc_info=True)
+
+        # Sort meetings chronologically by start date before yielding
+        meetings.sort(key=lambda m: m.get("start") or datetime.min)
+        self.logger.info(f"Yielding {len(meetings)} calendar meetings")
+        for meeting in meetings:
+            yield meeting
 
     def _parse_calendar_datetime(self, date_str, time_str):
         try:
