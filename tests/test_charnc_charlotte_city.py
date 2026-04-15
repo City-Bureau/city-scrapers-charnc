@@ -253,15 +253,16 @@ def test_same_day_legistar_match_different_time():
                 "address": "600 East 4th Street, Charlotte, NC 28202",
             },
             "links": [
-                {"href": "https://charlottenc.legistar.com/View.ashx?M=A&ID=1254313", "title": "Agenda"},  # noqa
+                {
+                    "href": "https://charlottenc.legistar.com/View.ashx?M=A&ID=1254313",
+                    "title": "Agenda",
+                },  # noqa
             ],
             "source": "https://charlottenc.legistar.com/Calendar.aspx",
         }
     )
     primary_start = datetime(2025, 12, 8, 17, 30)
-    match = spider._find_legistar_match(
-        "City Council Business Meeting", primary_start
-    )
+    match = spider._find_legistar_match("City Council Business Meeting", primary_start)
     assert match is not None
     assert match["_matched"] is True
     assert match["links"][0]["title"] == "Agenda"

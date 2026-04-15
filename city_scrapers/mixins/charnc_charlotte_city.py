@@ -585,7 +585,10 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         best_score = 0
 
         for key, entries in self._legistar_by_start.items():
-            if abs((key - start_dt).total_seconds()) > self.LEGISTAR_MATCH_WINDOW_MINUTES * 60:  # noqa
+            if (
+                abs((key - start_dt).total_seconds())
+                > self.LEGISTAR_MATCH_WINDOW_MINUTES * 60
+            ):  # noqa
                 continue
             for candidate in entries:
                 score = self._title_similarity(primary_title, candidate["title"])
