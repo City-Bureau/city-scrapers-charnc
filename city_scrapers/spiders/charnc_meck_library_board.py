@@ -279,6 +279,8 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
         title = raw_title.strip().strip("\xa0").strip()
         title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
         title = re.sub(r"\s+\d{1,2}[./]\d{1,2}[./]\d{2,4}\s*$", "", title)
+        # Strip inline location text jammed into the same text node as the title
+        title = re.sub(r",\s*[Mm]eeting will be held.*$", "", title)
         title = re.sub(r"\s+", " ", title).strip()
         return title or self.agency
 
@@ -456,8 +458,11 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         if not href:
                             continue
 
+                        # Convert relative URLs to absolute
+                        if href.startswith("/"):
+                            href = "https://www.cmlibrary.org" + href
                         # Fix URLs missing www subdomain to prevent redirects
-                        if href.startswith("https://cmlibrary.org/"):
+                        elif href.startswith("https://cmlibrary.org/"):
                             href = href.replace(
                                 "https://cmlibrary.org/",
                                 "https://www.cmlibrary.org/",

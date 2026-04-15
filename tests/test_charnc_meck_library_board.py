@@ -110,3 +110,14 @@ def test_cancelled(parsed_items):
 def test_all_day(parsed_items):
     for item in parsed_items:
         assert item["all_day"] is False
+
+
+def test_links_are_absolute(parsed_items):
+    for item in parsed_items:
+        for link in item["links"]:
+            assert link["href"].startswith("http"), f"Relative URL: {link['href']}"
+
+
+def test_no_title_contamination(parsed_items):
+    for item in parsed_items:
+        assert "Meeting will be held" not in item["title"]
