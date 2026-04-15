@@ -455,6 +455,15 @@ class CharncMeckLibraryBoardSpider(CityScrapersSpider):
                         href = a.attrib.get("href", "").strip()
                         if not href:
                             continue
+
+                        # Fix URLs missing www subdomain to prevent redirects
+                        if href.startswith("https://cmlibrary.org/"):
+                            href = href.replace(
+                                "https://cmlibrary.org/",
+                                "https://www.cmlibrary.org/",
+                                1,
+                            )
+
                         text = self._normalize_whitespace(
                             " ".join(a.css("::text").getall())
                         )
