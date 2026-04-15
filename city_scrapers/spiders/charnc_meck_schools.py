@@ -235,7 +235,9 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             try:
                 return dt_parse(f"{date} {title_time_str}", ignoretz=True)
             except Exception as e:
-                self.logger.warning(f"Failed to parse title time '{title_time_str}': {e}")
+                self.logger.warning(
+                    f"Failed to parse title time '{title_time_str}': {e}"
+                )
 
         # Fall back: search description for the main meeting time, skipping
         # closed-session / preparatory times that appear earlier in the text
@@ -262,7 +264,8 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         description = raw_description.lower()
 
         if "government center" in description or "cmgc" in description:
-            # Match specific room identifiers only — avoid false matches like "Chamber of"
+            # Match specific room identifiers only — avoid false matches like
+            # "Chamber of"
             room_match = re.search(
                 r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+|assembly\s+room)",
                 description,
@@ -277,8 +280,8 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             return {"name": "Virtual", "address": ""}
 
         address_pattern = (
-            r"(\d+\s+[A-Z][a-z]+\s+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|"
-            r"Boulevard|Blvd)[^,]*,\s*[A-Z][a-z]+,\s*[A-Z]{2}\s*\d{5})"
+            r"(\d+\s+[A-Za-z\s\.]+\s+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|"
+            r"Boulevard|Blvd)[^,]*,\s*[A-Za-z\s\.]+,\s*[A-Z]{2}\s*\d{5})"
         )
         address_match = re.search(address_pattern, raw_description, re.IGNORECASE)
 
@@ -329,7 +332,8 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 start_iso = parts[1]
                 end_iso = parts[2]
 
-                # Parse start and end times (ISO timestamps are in UTC, convert to local)
+                # Parse start and end times (ISO timestamps are in UTC,
+                # convert to local)
                 try:
                     start_utc = dt_parse(start_iso)
                     end_utc = dt_parse(end_iso)
@@ -351,9 +355,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 # Extract event URL if available
                 raw_url = event_link.css("::attr(href)").get() or ""
                 detail_url = (
-                    response.urljoin(raw_url)
-                    if raw_url and raw_url != "#"
-                    else ""
+                    response.urljoin(raw_url) if raw_url and raw_url != "#" else ""
                 )
 
                 # Extract location and time notes from title
@@ -366,9 +368,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 if location_text:
                     location = self._parse_calendar_location(location_text)
 
-                links = (
-                    [{"title": "Event", "href": detail_url}] if detail_url else []
-                )
+                links = [{"title": "Event", "href": detail_url}] if detail_url else []
 
                 meeting = Meeting(
                     title=title,
@@ -416,15 +416,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         # Parse location from event detail page (only override if list view was empty)
         if not meeting["location"]["name"] and not meeting["location"]["address"]:
-            location_name = (
-                response.css(".fsLocationName::text").get() or ""
-            ).strip()
+            location_name = (response.css(".fsLocationName::text").get() or "").strip()
             address_parts = response.css(
                 ".fsAddress *::text, .fsAddress::text"
             ).getall()
-            location_address = ", ".join(
-                p.strip() for p in address_parts if p.strip()
-            )
+            location_address = ", ".join(p.strip() for p in address_parts if p.strip())
             if location_name or location_address:
                 meeting["location"] = {
                     "name": location_name,
@@ -438,7 +434,8 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         Examples:
         - "Regular Meeting of the Board - CMGC Chamber Room (Closed Session at 4:00pm)"
-          -> title: "Regular Meeting of the Board", location: CMGC Chamber Room, time_notes: "Closed Session at 4:00pm"
+          -> title: "Regular Meeting of the Board", location: CMGC Chamber Room,
+             time_notes: "Closed Session at 4:00pm"
         """
         title = raw_title.strip()
         location = {"name": "", "address": ""}
@@ -488,10 +485,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 location_text,
                 re.IGNORECASE,
             )
-            room = f" {room_match.group(0).upper()}" if room_match else ""
+            room = f", {room_match.group(0).upper()}" if room_match else ""
             return {
-                "name": "Charlotte-Mecklenburg Government Center",
-                "address": f"600 East Fourth Street{room}, Charlotte, NC 28202",
+                "name": f"Charlotte-Mecklenburg Government Center{room}",
+                "address": "600 East Fourth Street, Charlotte, NC 28202",
             }
 
         # Handle "Name | City, State" format used by Finalsite calendar

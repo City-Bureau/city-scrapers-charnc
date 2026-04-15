@@ -46,7 +46,7 @@ def parsed_items(spider):
 def test_title(parsed_items):
     assert (
         parsed_items[0]["title"]
-        == "Facilities, Finance, & Operations Committee Meeting -- 1:00pm -- Virtual"
+        == "Facilities, Finance, & Operations Committee Meeting"
     )
 
 
@@ -70,7 +70,7 @@ def test_time_notes(parsed_items):
 def test_id(parsed_items):
     assert (
         parsed_items[0]["id"]
-        == "charnc_meck_schools/202604131300/x/facilities_finance_operations_committee_meeting_1_00pm_virtual"  # noqa
+        == "charnc_meck_schools/202604131300/x/facilities_finance_operations_committee_meeting"  # noqa
     )
 
 
