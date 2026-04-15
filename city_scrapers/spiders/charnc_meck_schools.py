@@ -15,7 +15,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     name = "charnc_meck_schools"
     agency = "Charlotte Mecklenburg Schools"
     timezone = "America/New_York"
-    years_back = 3
+    years_back = 1
     months_ahead = 3
 
     boarddocs_api_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeetingsList?open&0.{random_digit}"  # noqa
@@ -35,6 +35,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         "ROBOTSTXT_OBEY": False,
         "DOWNLOAD_DELAY": 1,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.seen_ids = set()
 
     def start_requests(self):
         # Scrape BoardDocs for historical and current meetings
@@ -146,9 +150,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         raw_description = response.meta["raw_description"]
 
         raw_title = detail_response.css(".meeting-name::text").get() or self.agency
-        title = self._parse_title(raw_title)
-        start = self._parse_start(raw_description, detail_response)
-        location = self._parse_location(raw_description)
+        title, title_time_str, title_location = self._parse_boarddocs_title(raw_title)
+        start = self._parse_start(raw_description, detail_response, title_time_str)
+        location = (
+            title_location
+            if title_location["name"] or title_location["address"]
+            else self._parse_location(raw_description)
+        )
 
         meeting = Meeting(
             title=title,
@@ -166,7 +174,49 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         meeting["status"] = self._get_status(meeting, text=raw_description)
         meeting["id"] = self._get_id(meeting)
 
-        yield meeting
+        # Skip duplicates
+        if meeting["id"] not in self.seen_ids:
+            self.seen_ids.add(meeting["id"])
+            yield meeting
+
+    def _parse_boarddocs_title(self, raw_title):
+        """Extract clean title, time string, and location from BoardDocs meeting titles.
+
+        Common patterns:
+        - "Regular Board Meeting -- 6:00pm -"
+        - "Emergency Meeting of the Board - 6:00pm - Virtual"
+        - "Special Meeting – Budget Workshop - 5:00pm - CMGC Room 267"
+        - "Regular Board Meeting -- 6:00pm (Closed Session at 4:00 pm) VIRTUAL MEETING"
+        - "Committee Meeting -- 2:00pm -- Virtual"
+        - "Family & Community Engagement Committee Meeting -- 12:00pm -- CMGC 527/528"
+        """
+        title = raw_title.strip()
+        time_str = ""
+        location = {"name": "", "address": ""}
+
+        # Extract trailing "VIRTUAL MEETING" flag before other parsing
+        virtual_match = re.search(r"\s+VIRTUAL\s+MEETING\s*$", title, re.IGNORECASE)
+        if virtual_match:
+            location = {"name": "Virtual", "address": ""}
+            title = title[: virtual_match.start()].strip()
+
+        # Match: [-- or -] time [-- or -] optional_location at end of string
+        # The [^-–] ensures location doesn't start with another dash
+        time_loc_match = re.search(
+            r"\s*[-–]{1,2}\s*(\d{1,2}:\d{2}\s*[aApP][mM])"
+            r"(?:\s*[-–]+\s*([^-–].+?))?\s*[-–]*\s*$",
+            title,
+            re.IGNORECASE,
+        )
+        if time_loc_match:
+            time_str = time_loc_match.group(1).strip()
+            loc_str = (time_loc_match.group(2) or "").strip()
+            if loc_str and not location["name"] and not location["address"]:
+                location = self._parse_calendar_location(loc_str)
+            title = title[: time_loc_match.start()].strip()
+
+        title = self._parse_title(title)
+        return title, time_str, location
 
     def _parse_title(self, raw_title):
         title = raw_title.strip()
@@ -175,16 +225,28 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         title = re.sub(r"\s+", " ", title).strip()
         return title or self.agency
 
-    def _parse_start(self, raw_description, detail_response):
+    def _parse_start(self, raw_description, detail_response, title_time_str=""):
         date = detail_response.css(".meeting-date::text").get()
         if not date:
             return None
 
-        description = raw_description.lower()
-        time_match = re.search(r"(\d{1,2}:\d{2})\s*([AaPp]\.?[Mm]\.?)", description)
+        # Prefer time extracted from title — more reliable than description
+        if title_time_str:
+            try:
+                return dt_parse(f"{date} {title_time_str}", ignoretz=True)
+            except Exception as e:
+                self.logger.warning(f"Failed to parse title time '{title_time_str}': {e}")
 
-        if time_match:
-            time_str = f"{time_match.group(1)} {time_match.group(2).replace('.', '')}"
+        # Fall back: search description for the main meeting time, skipping
+        # closed-session / preparatory times that appear earlier in the text
+        description = raw_description.lower()
+        # Find all times, prefer the last one (main meeting usually listed last)
+        time_matches = list(
+            re.finditer(r"(\d{1,2}:\d{2})\s*([AaPp]\.?[Mm]\.?)", description)
+        )
+        if time_matches:
+            m = time_matches[-1]
+            time_str = f"{m.group(1)} {m.group(2).replace('.', '')}"
             try:
                 return dt_parse(f"{date} {time_str}", ignoretz=True)
             except Exception as e:
@@ -200,8 +262,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         description = raw_description.lower()
 
         if "government center" in description or "cmgc" in description:
+            # Match specific room identifiers only — avoid false matches like "Chamber of"
             room_match = re.search(
-                r"(chamber|room|assembly)\s*(\d+|[a-z]+)", description, re.I
+                r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+|assembly\s+room)",
+                description,
+                re.IGNORECASE,
             )
             room = f" {room_match.group(0).upper()}" if room_match else ""
             return {
@@ -209,7 +274,15 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 "address": f"600 East Fourth Street{room}, Charlotte, NC 28202",
             }
 
-        if "virtual" in description or "zoom" in description or "online" in description:
+        # Only treat as virtual when the meeting itself is virtual, not just
+        # viewable online ("view the meeting online at youtube.com" is not virtual)
+        if "virtual" in description or "zoom" in description:
+            return {"name": "Virtual", "address": ""}
+        if re.search(
+            r"\b(meeting (will be|is being) held (virtually|online)|"
+            r"virtual meeting)\b",
+            description,
+        ):
             return {"name": "Virtual", "address": ""}
 
         address_pattern = (
@@ -234,8 +307,6 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         all_events = response.css("div.fsCalendarEvent")
         self.logger.info(f"Found {len(all_events)} calendar events")
 
-        # Collect meetings first, then sort before yielding
-        meetings = []
         for event_article in all_events:
             try:
                 # Get the event link (not the "Read More" link)
@@ -267,10 +338,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 start_iso = parts[1]
                 end_iso = parts[2]
 
-                # Parse start and end times
+                # Parse start and end times (ISO timestamps are in UTC, convert to local)
                 try:
-                    start = dt_parse(start_iso).replace(tzinfo=None)
-                    end = dt_parse(end_iso).replace(tzinfo=None)
+                    start_utc = dt_parse(start_iso)
+                    end_utc = dt_parse(end_iso)
+                    tz = ZoneInfo(self.timezone)
+                    start = start_utc.astimezone(tz).replace(tzinfo=None)
+                    end = end_utc.astimezone(tz).replace(tzinfo=None)
                 except Exception as e:
                     self.logger.warning(f"Failed to parse times from {occur_id}: {e}")
                     continue
@@ -284,18 +358,27 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     continue
 
                 # Extract event URL if available
-                event_url = event_link.css("::attr(href)").get() or ""
+                raw_url = event_link.css("::attr(href)").get() or ""
+                detail_url = (
+                    response.urljoin(raw_url)
+                    if raw_url and raw_url != "#"
+                    else ""
+                )
 
-                title = self._parse_title(title_elem)
+                # Extract location and time notes from title
+                title, location, time_notes = self._parse_calendar_title_details(
+                    title_elem
+                )
 
-                # Extract location if available
+                # Override with explicit location if available in list view
                 location_text = event_article.css("div.fsLocation::text").get()
                 if location_text:
                     location = self._parse_calendar_location(location_text)
-                else:
-                    location = {"name": "", "address": ""}
 
-                # For calendar events, we only have basic info from list view
+                links = (
+                    [{"title": "Event", "href": detail_url}] if detail_url else []
+                )
+
                 meeting = Meeting(
                     title=title,
                     description="",
@@ -303,26 +386,61 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     start=start,
                     end=end,
                     all_day=False,
-                    time_notes="",
+                    time_notes=time_notes,
                     location=location,
-                    links=[{"title": "Event", "href": event_url}] if event_url else [],
+                    links=links,
                     source=self.calendar_url,
                 )
 
                 meeting["status"] = self._get_status(meeting)
                 meeting["id"] = self._get_id(meeting)
 
-                meetings.append(meeting)
-                self.logger.debug(f"Parsed calendar event: {title} on {start}")
+                if meeting["id"] in self.seen_ids:
+                    self.logger.debug(f"Skipping duplicate event: {title} on {start}")
+                    continue
+                self.seen_ids.add(meeting["id"])
+
+                if detail_url:
+                    yield scrapy.Request(
+                        url=detail_url,
+                        callback=self._parse_calendar_detail,
+                        meta={"meeting": meeting},
+                    )
+                else:
+                    yield meeting
 
             except Exception as e:
                 self.logger.error(f"Failed to parse calendar event: {e}", exc_info=True)
 
-        # Sort meetings chronologically by start date before yielding
-        meetings.sort(key=lambda m: m.get("start") or datetime.min)
-        self.logger.info(f"Yielding {len(meetings)} calendar meetings")
-        for meeting in meetings:
-            yield meeting
+    def _parse_calendar_detail(self, response):
+        meeting = response.meta["meeting"]
+
+        # Parse description from event detail page
+        description_parts = response.css(
+            ".fsBody p::text, .fsBody p *::text, .fsSummary::text"
+        ).getall()
+        description = " ".join(p.strip() for p in description_parts if p.strip())
+        if description:
+            meeting["description"] = description
+
+        # Parse location from event detail page (only override if list view was empty)
+        if not meeting["location"]["name"] and not meeting["location"]["address"]:
+            location_name = (
+                response.css(".fsLocationName::text").get() or ""
+            ).strip()
+            address_parts = response.css(
+                ".fsAddress *::text, .fsAddress::text"
+            ).getall()
+            location_address = ", ".join(
+                p.strip() for p in address_parts if p.strip()
+            )
+            if location_name or location_address:
+                meeting["location"] = {
+                    "name": location_name,
+                    "address": location_address,
+                }
+
+        yield meeting
 
     def _parse_calendar_datetime(self, date_str, time_str):
         try:
@@ -333,6 +451,42 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         except Exception as e:
             self.logger.warning(f"Failed to parse calendar datetime: {e}")
             return None
+
+    def _parse_calendar_title_details(self, raw_title):
+        """Extract title, location, and time notes from calendar event titles.
+
+        Examples:
+        - "Regular Meeting of the Board - CMGC Chamber Room (Closed Session at 4:00pm)"
+          -> title: "Regular Meeting of the Board", location: CMGC Chamber Room, time_notes: "Closed Session at 4:00pm"
+        """
+        title = raw_title.strip()
+        location = {"name": "", "address": ""}
+        time_notes = ""
+
+        # Extract parenthetical time notes (e.g., "Closed Session at 4:00pm")
+        paren_match = re.search(r"\(([^)]+)\)\s*$", title)
+        if paren_match:
+            time_notes = paren_match.group(1).strip()
+            title = title[: paren_match.start()].strip()
+
+        # Extract location from title (e.g., "- CMGC Chamber Room")
+        location_patterns = [
+            r"\s*-\s*(CMGC\s+[^-]+?)$",  # "- CMGC Chamber Room"
+            r"\s*--\s*([^-]+?)$",  # "-- Virtual" or "-- CMGC 527/528"
+        ]
+
+        for pattern in location_patterns:
+            loc_match = re.search(pattern, title, re.IGNORECASE)
+            if loc_match:
+                location_str = loc_match.group(1).strip()
+                title = title[: loc_match.start()].strip()
+                location = self._parse_calendar_location(location_str)
+                break
+
+        # Clean up title
+        title = self._parse_title(title)
+
+        return title, location, time_notes
 
     def _parse_calendar_location(self, location_text):
         if not location_text:
@@ -347,10 +501,22 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             "government center" in location_text.lower()
             or "cmgc" in location_text.lower()
         ):
+            # Extract room info if present
+            room_match = re.search(
+                r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+)",
+                location_text,
+                re.IGNORECASE,
+            )
+            room = f" {room_match.group(0).upper()}" if room_match else ""
             return {
                 "name": "Charlotte-Mecklenburg Government Center",
-                "address": "600 East Fourth Street, Charlotte, NC 28202",
+                "address": f"600 East Fourth Street{room}, Charlotte, NC 28202",
             }
+
+        # Handle "Name | City, State" format used by Finalsite calendar
+        if "|" in location_text:
+            parts = location_text.split("|", 1)
+            return {"name": parts[0].strip(), "address": parts[1].strip()}
 
         if "," in location_text:
             parts = location_text.split(",", 1)
