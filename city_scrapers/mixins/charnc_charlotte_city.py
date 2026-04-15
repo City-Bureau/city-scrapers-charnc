@@ -64,7 +64,6 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
     }
-    since_year = 2023
     default_legistar_address = "600 East 4th Street, Charlotte, NC 28202"
 
     def __init__(self, *args, **kwargs):
