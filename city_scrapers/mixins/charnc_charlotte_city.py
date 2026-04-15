@@ -65,6 +65,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         "ROBOTSTXT_OBEY": False,
     }
     since_year = 2023
+    default_legistar_address = "600 East 4th Street, Charlotte, NC 28202"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -232,7 +233,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
                     "title": body,
                     "location": {
                         "name": location_text,
-                        "address": "600 East 4th Street, Charlotte, NC 28202",
+                        "address": self.default_legistar_address,
                     },
                     "links": links,
                     "source": source,
@@ -240,7 +241,11 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             )
 
     def _parse_legistar_events(self, response):
-        events_table = response.css("table.rgMasterTable")[0]
+        events_tables = response.css("table.rgMasterTable")
+        if not events_tables:
+            return []
+
+        events_table = events_tables[0]
 
         headers = []
         for header in events_table.css("th[class^='rgHeader']"):
@@ -253,7 +258,8 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             elif len(header_inputs) > 0:
                 headers.append(header_inputs[0].attrib["value"])
             else:
-                headers.append(header.css("img")[0].attrib["alt"])
+                imgs = header.css("img")
+                headers.append(imgs[0].attrib.get("alt", "") if imgs else "")
 
         events = []
         for row in events_table.css("tr.rgRow, tr.rgAltRow"):
@@ -293,8 +299,12 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
                     self._scraped_urls.add(ical_url)
 
                 events.append(dict(data))
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to parse Legistar row for %s: %s",
+                    response.url,
+                    e,
+                )
 
         return events
 
@@ -372,7 +382,8 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         return self._clean_text(raw)
 
     def _parse_primary_category(self, item):
-        return item.css("p.tagged-as-list span.text::text").get(default="").strip()
+        categories = item.css("p.tagged-as-list span.text::text").getall()
+        return " ".join(c.strip() for c in categories if c.strip())
 
     def _normalize_special_chars(self, text):
         if not text:
@@ -567,21 +578,23 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             if part.strip()
         )
 
-    def _find_legistar_match(self, primary_title, start_dt):
-        candidates = self._legistar_by_start.get(start_dt, [])
-        if not candidates:
-            return None
+    LEGISTAR_MATCH_WINDOW_MINUTES = 60
+    LEGISTAR_TITLE_SIMILARITY_THRESHOLD = 0.55
 
+    def _find_legistar_match(self, primary_title, start_dt):
         best = None
         best_score = 0
 
-        for candidate in candidates:
-            score = self._title_similarity(primary_title, candidate["title"])
-            if score > best_score:
-                best = candidate
-                best_score = score
+        for key, entries in self._legistar_by_start.items():
+            if abs((key - start_dt).total_seconds()) > self.LEGISTAR_MATCH_WINDOW_MINUTES * 60:  # noqa
+                continue
+            for candidate in entries:
+                score = self._title_similarity(primary_title, candidate["title"])
+                if score > best_score:
+                    best = candidate
+                    best_score = score
 
-        if best_score >= 0.55:
+        if best_score >= self.LEGISTAR_TITLE_SIMILARITY_THRESHOLD:
             best["_matched"] = True
             return best
         return None

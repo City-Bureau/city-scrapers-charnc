@@ -241,6 +241,32 @@ def test_primary_detail_strategy_session_with_legistar_agenda(strategy_session_i
     )
 
 
+def test_same_day_legistar_match_different_time():
+    """Legistar entry with wrong start time on the same date should still match."""
+    spider = CharlotteCityCouncilBusinessMeetingsSpider()
+    legistar_start = datetime(2025, 12, 8, 17, 0)
+    spider._legistar_by_start[legistar_start].append(
+        {
+            "title": "City Council Business Meeting",
+            "location": {
+                "name": "Council Chamber",
+                "address": "600 East 4th Street, Charlotte, NC 28202",
+            },
+            "links": [
+                {"href": "https://charlottenc.legistar.com/View.ashx?M=A&ID=1254313", "title": "Agenda"},  # noqa
+            ],
+            "source": "https://charlottenc.legistar.com/Calendar.aspx",
+        }
+    )
+    primary_start = datetime(2025, 12, 8, 17, 30)
+    match = spider._find_legistar_match(
+        "City Council Business Meeting", primary_start
+    )
+    assert match is not None
+    assert match["_matched"] is True
+    assert match["links"][0]["title"] == "Agenda"
+
+
 def test_legistar_zoning_meeting(legistar_zoning_item):
     spider, start = legistar_zoning_item
     assert start in spider._legistar_by_start
