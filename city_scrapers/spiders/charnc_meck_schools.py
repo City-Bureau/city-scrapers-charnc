@@ -268,21 +268,12 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 description,
                 re.IGNORECASE,
             )
-            room = f" {room_match.group(0).upper()}" if room_match else ""
-            return {
-                "name": "Charlotte-Mecklenburg Government Center",
-                "address": f"600 East Fourth Street{room}, Charlotte, NC 28202",
-            }
+            loc_str = f"CMGC{' ' + room_match.group(0) if room_match else ''}"
+            return self._parse_calendar_location(loc_str)
 
         # Only treat as virtual when the meeting itself is virtual, not just
         # viewable online ("view the meeting online at youtube.com" is not virtual)
         if "virtual" in description or "zoom" in description:
-            return {"name": "Virtual", "address": ""}
-        if re.search(
-            r"\b(meeting (will be|is being) held (virtually|online)|"
-            r"virtual meeting)\b",
-            description,
-        ):
             return {"name": "Virtual", "address": ""}
 
         address_pattern = (
@@ -441,16 +432,6 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 }
 
         yield meeting
-
-    def _parse_calendar_datetime(self, date_str, time_str):
-        try:
-            if time_str:
-                return dt_parse(f"{date_str} {time_str}", ignoretz=True)
-            else:
-                return dt_parse(f"{date_str} 9:00 AM", ignoretz=True)
-        except Exception as e:
-            self.logger.warning(f"Failed to parse calendar datetime: {e}")
-            return None
 
     def _parse_calendar_title_details(self, raw_title):
         """Extract title, location, and time notes from calendar event titles.
