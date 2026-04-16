@@ -32,14 +32,14 @@ class CharncMeckPdSpider(CityScrapersSpider):
 
         # Extract event URLs and descriptions
         for article in response.css(".list-item-container article"):
-            evnts_link = article.css("a::attr(href)").get()
+            event_link = article.css("a::attr(href)").get()
             description = " ".join(
                 " ".join(article.css(".list-item-block-desc ::text").getall()).split()
             )
 
-            if evnts_link:
+            if event_link:
                 yield response.follow(
-                    evnts_link,
+                    event_link,
                     callback=self.parse,
                     meta={"description": description},
                 )
@@ -74,12 +74,9 @@ class CharncMeckPdSpider(CityScrapersSpider):
 
     # EVENT DETAIL PAGE
     def parse(self, response):
-
         raw_title = response.css("h1::text").get("").strip()
         title = self._parse_title(raw_title)
-
         location = self._parse_location(response)
-
         description = response.meta.get("description", "")
 
         # Add notice if location is missing or event is virtual
@@ -92,7 +89,6 @@ class CharncMeckPdSpider(CityScrapersSpider):
                 description = notice
 
         items = response.css("li.multi-date-item")
-
         if not items:
             self.logger.warning(f"No dates found on {response.url}")
             return
@@ -100,7 +96,6 @@ class CharncMeckPdSpider(CityScrapersSpider):
         for item in items:
             start = self._parse_item_dt(item, "start")
             end = self._parse_item_dt(item, "end")
-
             if not start:
                 continue
 
