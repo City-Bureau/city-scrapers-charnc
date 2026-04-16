@@ -34,7 +34,12 @@ def parsed_items(spider):
         join(dirname(__file__), "files", "charnc_meck_schools_agenda.html"),
         url="https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetAgenda?open&0.123456789012345",  # noqa
     )
-    agenda_response.meta["detail_response"] = detail_response
+    agenda_response.meta["raw_title"] = (
+        detail_response.css(".meeting-name::text").get() or spider.agency
+    )
+    agenda_response.meta["meeting_date"] = detail_response.css(
+        ".meeting-date::text"
+    ).get()
     agenda_response.meta["raw_description"] = " ".join(
         detail_response.css(".meeting-description::text").getall()
     )

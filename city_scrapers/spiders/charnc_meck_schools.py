@@ -29,6 +29,9 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     calendar_api_url = "https://www.cmsk12.org/fs/elements/236115"
     calendar_page_id = "29911"
     calendar_parent_id = "236115"
+    # Cutover date: last date with data on BoardDocs. Nothing after this date
+    # is available on BoardDocs. The Finalsite calendar source is used for all
+    # meetings strictly after this date (filter applied per-event in _parse_calendar).
     last_boarddocs_date = "2026-04-17"
 
     custom_settings = {
@@ -56,7 +59,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         today = datetime.now(tz=ZoneInfo(self.timezone))
         last_bd_date = dt_parse(self.last_boarddocs_date).date()
 
-        # Start from month containing day after last BoardDocs date
+        # The Finalsite API only accepts month-granularity (cal_date=YYYY-MM-01),
+        # so we must request the whole month that contains the cutover. Events on
+        # or before last_bd_date are filtered out per-event in _parse_calendar,
+        # preventing any overlap with the BoardDocs source.
         start_date = (last_bd_date + relativedelta(days=1)).replace(day=1)
         # End date: 3 months ahead as per user rules
         end_date = (today + relativedelta(months=self.months_ahead)).date()
@@ -132,13 +138,16 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     def _parse_boarddocs_detail(self, response):
         raw_description = " ".join(response.css(".meeting-description::text").getall())
         meeting_id = response.meta["meeting_id"]
+        raw_title = response.css(".meeting-name::text").get() or self.agency
+        meeting_date = response.css(".meeting-date::text").get()
         random_digit = random.randint(10**14, 10**15 - 1)
         yield scrapy.Request(
             url=self.boarddocs_agenda_url.format(random_digit=random_digit),
             method="POST",
             body=f"current_committee_id={self.boarddocs_committee_id}&id={meeting_id}",
             meta={
-                "detail_response": response,
+                "raw_title": raw_title,
+                "meeting_date": meeting_date,
                 "raw_description": raw_description,
                 "source": "boarddocs",
             },
@@ -146,12 +155,12 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         )
 
     def _parse_boarddocs_meeting(self, response):
-        detail_response = response.meta["detail_response"]
         raw_description = response.meta["raw_description"]
+        raw_title = response.meta["raw_title"]
+        meeting_date = response.meta["meeting_date"]
 
-        raw_title = detail_response.css(".meeting-name::text").get() or self.agency
         title, title_time_str, title_location = self._parse_boarddocs_title(raw_title)
-        start = self._parse_start(raw_description, detail_response, title_time_str)
+        start = self._parse_start(raw_description, meeting_date, title_time_str)
         location = (
             title_location
             if title_location["name"] or title_location["address"]
@@ -225,8 +234,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         title = re.sub(r"\s+", " ", title).strip()
         return title or self.agency
 
-    def _parse_start(self, raw_description, detail_response, title_time_str=""):
-        date = detail_response.css(".meeting-date::text").get()
+    def _parse_start(self, raw_description, date, title_time_str=""):
         if not date:
             return None
 
@@ -261,14 +269,12 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             return None
 
     def _parse_location(self, raw_description):
-        description = raw_description.lower()
-
-        if "government center" in description or "cmgc" in description:
+        if re.search(r"government center|cmgc", raw_description, re.IGNORECASE):
             # Match specific room identifiers only — avoid false matches like
             # "Chamber of"
             room_match = re.search(
                 r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+|assembly\s+room)",
-                description,
+                raw_description,
                 re.IGNORECASE,
             )
             loc_str = f"CMGC{' ' + room_match.group(0) if room_match else ''}"
@@ -276,7 +282,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         # Only treat as virtual when the meeting itself is virtual, not just
         # viewable online ("view the meeting online at youtube.com" is not virtual)
-        if "virtual" in description or "zoom" in description:
+        if re.search(r"\bvirtual\b|\bzoom\b", raw_description, re.IGNORECASE):
             return {"name": "Virtual", "address": ""}
 
         address_pattern = (
@@ -286,8 +292,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         address_match = re.search(address_pattern, raw_description, re.IGNORECASE)
 
         if address_match:
-            address = address_match.group(1).strip()
-            return {"name": "", "address": address}
+            return {"name": "", "address": address_match.group(1).strip()}
 
         return {"name": "", "address": ""}
 
