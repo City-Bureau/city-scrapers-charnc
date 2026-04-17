@@ -538,7 +538,7 @@ def test_classification_variants(title, expected):
     assert s._parse_classification(title) == expected
 
 
-# --- _cancelled_patterns ---
+# --- _clean_title_re ---
 
 
 @pytest.mark.parametrize(
@@ -553,8 +553,8 @@ def test_classification_variants(title, expected):
     ],
 )
 def test_cancellation_keywords_detected(raw_title):
-    """_cancelled_patterns must match all cancellation phrase variants."""
-    assert CharncMeckBocSpider._cancelled_patterns.search(raw_title) is not None
+    """_clean_title_re must match all cancellation phrase variants at title start."""
+    assert CharncMeckBocSpider._clean_title_re.match(raw_title.strip()) is not None
 
 
 # --- _parse_dt ---
@@ -743,6 +743,46 @@ def test_parse_legistar_start_bad_date():
     """Malformed date must log and return None (not crash)."""
     s = CharncMeckBocSpider()
     assert s._parse_legistar_start({"EventDate": "not-a-date", "EventTime": ""}) is None
+
+
+# --- _get_status ---
+
+
+def test_get_status_ignores_cancellation_in_description():
+    """'Cancellation' checkbox in BOCC agenda boilerplate must NOT produce CANCELLED.
+
+    BOCC meeting descriptions contain a form row:
+    'Regular Meeting [X]  Special Meeting [ ]  Emergency Meeting [ ]  Cancellation [ ]
+    This Meeting is rescheduled for ___'
+    The base class _get_status scans description text and would falsely detect
+    'Cancellation' as a cancellation keyword. Our override excludes description.
+    """
+    with freeze_time("2026-04-09"):
+        s = CharncMeckBocSpider()
+    item = {
+        "title": "BOCC Intergovernmental Relations Committee",
+        "description": (
+            "Regular Meeting X  Special Meeting   Emergency Meeting   "
+            "Cancellation   This Meeting is rescheduled for ___"
+        ),
+        "start": datetime(2026, 6, 1, 13, 0),  # future
+    }
+    assert s._get_status(item) == TENTATIVE
+
+
+def test_get_status_subject_to_cancellation_not_cancelled():
+    """Policy language 'subject to cancellation' must NOT mark a meeting CANCELLED."""
+    with freeze_time("2026-04-09"):
+        s = CharncMeckBocSpider()
+    item = {
+        "title": "BOCC Economic Development Committee",
+        "description": (
+            "3rd Tuesday meetings are subject to cancellation "
+            "at the committee chair's discretion."
+        ),
+        "start": datetime(2026, 6, 1, 15, 30),  # future
+    }
+    assert s._get_status(item) == TENTATIVE
 
 
 # --- _match_legistar_links ---

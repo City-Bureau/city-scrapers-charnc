@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from html.parser import HTMLParser
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -7,9 +8,12 @@ import scrapy
 from city_scrapers_core.constants import (
     ADVISORY_COMMITTEE,
     BOARD,
+    CANCELLED,
     COMMISSION,
     COMMITTEE,
     NOT_CLASSIFIED,
+    PASSED,
+    TENTATIVE,
 )
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
@@ -19,8 +23,10 @@ class CharncMeckBocSpider(CityScrapersSpider):
     name = "charnc_meck_boc"
     agency = "Mecklenburg County"
     timezone = "America/New_York"
-    start_urls = ["https://calendar.mecknc.gov/jsonapi/node/event"]
-
+    start_url = (
+        "https://calendar.mecknc.gov/jsonapi/node/event"
+        "?page%5Boffset%5D=0&page%5Blimit%5D={limit}"
+    )
     legistar_url = "https://mecklenburg.legistar.com/Calendar.aspx"
     legistar_api = "https://webapi.legistar.com/v1/mecklenburg/events"
     legistar_page_size = 1000
@@ -28,7 +34,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
     since_year = 2022
     _tz = ZoneInfo("America/New_York")
 
-    custom_settings = {"ROBOTSTXT_OBEY": False}
+    custom_settings = {"ROBOTSTXT_OBEY": False, "FEED_EXPORT_ENCODING": "utf-8"}
 
     _browser_ua = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -56,15 +62,12 @@ class CharncMeckBocSpider(CityScrapersSpider):
         re.IGNORECASE,
     )
     _significant_words_re = re.compile(r"[^a-z0-9\s]")
-    _cancelled_patterns = re.compile(
-        r"will\s+not\s+be\s+held|cancelled|canceled|postponed|rescheduled",
-        re.IGNORECASE,
-    )
     _location_comment_re = re.compile(
         r"(\d|room|suite|floor|ave|st\b|blvd|dr\b|rd\b|hwy|bldg|govt|government"
         r" center)",
         re.IGNORECASE,
     )
+    _street_re = re.compile(r"^\s*\d+\s+")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -125,10 +128,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             self.logger.info(
                 "Legistar load complete: %d total events", len(self.legistar_events)
             )
-            url = (
-                f"{self.start_urls[0]}"
-                f"?page%5Boffset%5D=0&page%5Blimit%5D={self.primary_page_size}"
-            )
+            url = self.start_url.format(limit=self.primary_page_size)
             yield scrapy.Request(
                 url,
                 headers={
@@ -174,7 +174,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
                     start = self._parse_legistar_start(legistar_event)
             meeting = Meeting(
                 title=title,
-                description="",
+                description=self._parse_description(attrs),
                 classification=self._parse_classification(title),
                 start=start,
                 end=end,
@@ -184,12 +184,26 @@ class CharncMeckBocSpider(CityScrapersSpider):
                 links=links,
                 source=attrs.get("absolute_url") or self.legistar_url,
             )
-            # Pass "cancelled" hint so _get_status() returns CANCELLED when the
-            # raw title contained a cancellation phrase that was stripped for display.
-            cancel_text = (
-                "cancelled" if self._cancelled_patterns.search(raw_title) else ""
-            )
-            meeting["status"] = self._get_status(meeting, text=cancel_text)
+            # If _clean_title stripped a cancellation prefix (e.g. "WILL NOT BE
+            # HELD:"), force CANCELLED regardless of what _get_status infers.
+            # Otherwise pass raw_title + location + time_notes so _get_status()
+            # can catch "cancel"/"postpone" phrases in any of those fields.
+            loc = meeting["location"]
+            if self._clean_title_re.match(raw_title.strip()):
+                meeting["status"] = CANCELLED
+            else:
+                status_text = " ".join(
+                    filter(
+                        None,
+                        [
+                            raw_title,
+                            loc.get("name"),
+                            loc.get("address"),
+                            meeting["time_notes"],
+                        ],
+                    )
+                )
+                meeting["status"] = self._get_status(meeting, text=status_text)
             meeting["id"] = self._get_id(meeting)
             if meeting["id"] in self._seen_ids:
                 continue
@@ -237,6 +251,34 @@ class CharncMeckBocSpider(CityScrapersSpider):
         """Strip whitespace and remove leading cancellation prefixes."""
         return self._clean_title_re.sub("", title.strip()).strip()
 
+    def _parse_description(self, attrs):
+        """Combine field_date_time_description (plain text) and field_details.value
+        (HTML) into a single plain-text description string, matching what appears
+        after the Time / Add to Calendar section on the event detail page."""
+        parts = []
+        schedule_note = (attrs.get("field_date_time_description") or "").strip()
+        if schedule_note:
+            parts.append(schedule_note)
+
+        html = (attrs.get("field_details") or {}).get("value") or ""
+        if html:
+
+            class _Stripper(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.chunks = []
+
+                def handle_data(self, data):
+                    self.chunks.append(data)
+
+            stripper = _Stripper()
+            stripper.feed(html)
+            body = " ".join(c.strip() for c in stripper.chunks if c.strip())
+            if body:
+                parts.append(body)
+
+        return " ".join(parts)
+
     def _is_non_meeting(self, title):
         """Return True for non-meeting events such as office closure notices."""
         return "government offices closed" in title.lower()
@@ -262,19 +304,22 @@ class CharncMeckBocSpider(CityScrapersSpider):
     def _parse_location(self, attrs):
         addr = attrs.get("field_event_address") or {}
         if not isinstance(addr, dict):
-            name = str(addr).strip()
-        else:
-            line1 = (addr.get("address_line1") or "").strip()
-            line2 = (addr.get("address_line2") or "").strip()
-            city = (addr.get("locality") or "").strip()
-            state = (addr.get("administrative_area") or "").strip()
-            postal = (addr.get("postal_code") or "").strip()
-            name_parts = [p for p in [line1, line2] if p]
-            city_parts = [p for p in [city, f"{state} {postal}".strip()] if p]
-            if city_parts:
-                name_parts.append(", ".join(city_parts))
-            name = ", ".join(name_parts)
-        return {"name": self._normalize_location_name(name), "address": ""}
+            return {
+                "name": self._normalize_location_name(str(addr).strip()),
+                "address": "",
+            }
+        org = (addr.get("organization") or "").strip()
+        line1 = (addr.get("address_line1") or "").strip()
+        line2 = (addr.get("address_line2") or "").strip()
+        city = (addr.get("locality") or "").strip()
+        state = (addr.get("administrative_area") or "").strip()
+        postal = (addr.get("postal_code") or "").strip()
+        city_str = ", ".join(p for p in [city, f"{state} {postal}".strip()] if p)
+        parts = [p for p in [org, line1, line2, city_str] if p]
+        return {
+            "name": self._normalize_location_name(", ".join(parts)),
+            "address": "",
+        }
 
     def _normalize_location_name(self, name):
         """Normalize location names by fixing typos and standardizing formats."""
@@ -286,6 +331,27 @@ class CharncMeckBocSpider(CityScrapersSpider):
         name = re.sub(r",\s*Charlotte\s*,\s*Charlotte", ", Charlotte", name)
         name = re.sub(r",\s*NC\s*$", ", NC", name)
         return name.strip()
+
+    def _split_location(self, name):
+        """Split a location string into name (building/room) and address (street).
+
+        Splits at the first comma-separated segment that starts with a house
+        number so that multi-part venue names like
+        'Central Piedmont Community College, Harris Conference Center, 3216 ...'
+        keep all venue parts in name and only the street onward in address.
+        """
+        if not name:
+            return {"name": "", "address": ""}
+        parts = [p.strip() for p in name.split(",")]
+        street_idx = next(
+            (i for i, p in enumerate(parts) if self._street_re.match(p)), None
+        )
+        if street_idx is None:
+            return {"name": name, "address": ""}
+        return {
+            "name": ", ".join(parts[:street_idx]),
+            "address": ", ".join(parts[street_idx:]),
+        }
 
     def _clean_location_name(self, name):
         """Strip editorial phrases and normalize line breaks in location names."""
@@ -323,11 +389,14 @@ class CharncMeckBocSpider(CityScrapersSpider):
             for event in self.legistar_events:
                 s = self._parse_legistar_start(event)
                 if s:
+                    event["_significant_words"] = self._significant_words(
+                        event.get("EventBodyName", "")
+                    )
                     self._legistar_by_date.setdefault(s.date(), []).append(event)
 
         title_words = self._significant_words(title)
         for event in self._legistar_by_date.get(date, []):
-            legistar_words = self._significant_words(event.get("EventBodyName", ""))
+            legistar_words = event["_significant_words"]
             overlap = title_words & legistar_words
             if len(overlap) >= 2 or (legistar_words and legistar_words <= title_words):
                 return event
@@ -397,23 +466,55 @@ class CharncMeckBocSpider(CityScrapersSpider):
             end=None,
             all_day=False,
             time_notes="",
-            location={"name": location_name, "address": ""},
+            location=self._split_location(location_name),
             links=self._legistar_links(event),
             source=event.get("EventInSiteURL") or self.legistar_url,
         )
-        cancel_text = "cancelled" if self._cancelled_patterns.search(raw_title) else ""
-        meeting["status"] = self._get_status(meeting, text=cancel_text)
+        loc = meeting["location"]
+        if self._clean_title_re.match(raw_title.strip()):
+            meeting["status"] = CANCELLED
+        else:
+            status_text = " ".join(
+                filter(
+                    None,
+                    [
+                        raw_title,
+                        loc.get("name"),
+                        loc.get("address"),
+                        meeting["time_notes"],
+                    ],
+                )
+            )
+            meeting["status"] = self._get_status(meeting, text=status_text)
         meeting["id"] = self._get_id(meeting)
         return meeting
+
+    def _get_status(self, item, text=""):
+        """Override base class to exclude meeting description from cancellation
+        detection. BOCC agenda templates contain a 'Cancellation' checkbox in
+        boilerplate text (e.g. 'Regular Meeting X ... Cancellation _ ...') that
+        causes false positives when the base class scans description content.
+        Only the title and the explicit text parameter are checked here.
+        """
+        check = " ".join([item.get("title", ""), text]).lower()
+        if any(w in check for w in ["cancel", "rescheduled", "postpone"]):
+            return CANCELLED
+        if item["start"] < datetime.now():
+            return PASSED
+        return TENTATIVE
 
     def _parse_classification(self, title):
         title_lower = title.lower()
         if "advisory" in title_lower:
             return ADVISORY_COMMITTEE
-        if "board" in title_lower or title_lower.startswith("bocc"):
+        if "board" in title_lower or "bocc" in title_lower:
             return BOARD
-        if "commission" in title_lower:
+        if "commission" in title_lower or "district" in title_lower:
             return COMMISSION
-        if "committee" in title_lower or "policy" in title_lower:
+        if (
+            "committee" in title_lower
+            or "policy" in title_lower
+            or "council" in title_lower
+        ):
             return COMMITTEE
         return NOT_CLASSIFIED
