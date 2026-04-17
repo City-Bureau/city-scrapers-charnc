@@ -224,6 +224,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             location = {"name": "Virtual", "address": ""}
             title = title[: virtual_match.start()].strip()
 
+        # Remove trailing parentheticals before time extraction to handle
+        # patterns like "-- 6:00pm (Closed Session at 4:00pm) -"
+        title = re.sub(r"\s*\([^)]*\)\s*[-–]*\s*$", "", title)
+
         # Match: [-- or -] time [-- or -] optional_location at end of string
         # The [^-–] ensures location doesn't start with another dash
         time_loc_match = re.search(
@@ -246,6 +250,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         title = raw_title.strip()
         title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
         title = re.sub(r"\s+\d{1,2}[./]\d{1,2}[./]\d{2,4}\s*$", "", title)
+        title = re.sub(r"\s*[-–]+\s*$", "", title)
         title = re.sub(r"\s+", " ", title).strip()
         return title or self.agency
 
@@ -289,16 +294,19 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         #   "600 East 4th Street Charlotte, NC 28202"
         #   "600 East Fourth Street, Charlotte, NC 28202"
         address_pattern = (
-            r"(\d+\s+[A-Za-z0-9\s\.\#]+?(?:" + street_types + r")[^,\n]{0,40}[,\s]+"
-            r"[A-Za-z][A-Za-z\s\.\-]{1,30},"
-            r"\s*[A-Z]{2}\s*\d{5})"
+            r"(\d+\s+[A-Za-z0-9\s\.\#]+?(?:" + street_types + r")[^,\n]{0,40}[,\s]*"
+            r"[A-Za-z][A-Za-z\s\.\-]{1,30}[,\s]+"
+            r"[A-Z]{2}\s*\d{5})"
         )
 
-        if re.search(r"government center|cmgc", raw_description, re.IGNORECASE):
-            # Match specific room identifiers only — avoid false matches like
-            # "Chamber of"
+        if re.search(
+            r"government center|govt\.?\s+center|cmgc|char-meck",
+            raw_description,
+            re.IGNORECASE,
+        ):
+            # Match specific room identifiers including "Chamber" alone or with "Room"
             room_match = re.search(
-                r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+|assembly\s+room)",
+                r"(?:chamber(?:\s+room)?|room\s+\d+|ch\d+|\d+/\d+|assembly\s+room)",
                 raw_description,
                 re.IGNORECASE,
             )
@@ -612,7 +620,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         ):
             # Extract room info if present
             room_match = re.search(
-                r"(chamber\s+room|room\s+\d+|ch\d+|\d+/\d+)",
+                r"(?:chamber(?:\s+room)?|room\s+\d+|ch\d+|\d+/\d+)",
                 location_text,
                 re.IGNORECASE,
             )

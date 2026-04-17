@@ -271,3 +271,39 @@ def test_parse_location_cmgc_no_address_in_description(spider):
     loc = spider._parse_location(description)
     assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
     assert loc["address"] == ""
+
+
+def test_parse_title_removes_trailing_dash(spider):
+    """Trailing dashes should be removed from titles."""
+    # Test through _parse_boarddocs_title which calls _parse_title
+    title, time_str, location = spider._parse_boarddocs_title(
+        "Regular Meeting of the Board -- 6:00pm (Closed Session at 5:30pm) -"
+    )
+    assert title == "Regular Meeting of the Board"
+    assert not title.endswith("-")
+    assert time_str == "6:00pm"
+
+
+def test_parse_location_chamber_without_room(spider):
+    """'Chamber' alone (without 'Room') should be extracted."""
+    description = (
+        "The Board will meet in person in the Chamber of the "
+        "Charlotte-Mecklenburg Government Center."
+    )
+    loc = spider._parse_location(description)
+    assert "CHAMBER" in loc["name"]
+
+
+def test_parse_location_address_without_comma_after_street(spider):
+    """Address should be extracted even without comma after street name."""
+    description = "Char-Meck Govt Center 600 East 4th Street Charlotte, NC 28202"
+    loc = spider._parse_location(description)
+    assert "600 East 4th Street" in loc["address"]
+    assert "28202" in loc["address"]
+
+
+def test_parse_calendar_location_chamber_without_room(spider):
+    """Calendar location parsing should handle 'Chamber' without 'Room'."""
+    loc = spider._parse_calendar_location("CMGC Chamber")
+    assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
+    assert "CHAMBER" in loc["name"]
