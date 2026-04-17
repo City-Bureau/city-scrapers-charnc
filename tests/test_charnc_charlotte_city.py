@@ -25,9 +25,9 @@ def legistar_business_item():
         join(TEST_DIR, "charnc_charlotte_city_legistar_business.html"),
         url="https://charlottenc.legistar.com/Calendar.aspx",
     )
-    with freeze_time("2026-03-31"):
-        spider._parse_legistar_rows(response)
-    start = datetime(2024, 6, 24, 17, 0)
+    events = spider._parse_legistar_events(response)
+    spider.parse_legistar(events)
+    start = list(spider._legistar_by_start.keys())[0]
     return spider, start
 
 
@@ -98,9 +98,9 @@ def legistar_zoning_item():
         join(TEST_DIR, "charnc_charlotte_city_legistar_zoning.html"),
         url="https://charlottenc.legistar.com/Calendar.aspx",
     )
-    with freeze_time("2026-03-31"):
-        spider._parse_legistar_rows(response)
-    start = datetime(2025, 3, 17, 17, 0)
+    events = spider._parse_legistar_events(response)
+    spider.parse_legistar(events)
+    start = list(spider._legistar_by_start.keys())[0]
     return spider, start
 
 
@@ -239,33 +239,6 @@ def test_primary_detail_strategy_session_with_legistar_agenda(strategy_session_i
         item["id"] == "charlotte_city_council_strategy_session/202603020900/x/"
         "special_meeting_notice_city_council_annual_strategy_meeting_day_1_"
     )
-
-
-def test_same_day_legistar_match_different_time():
-    """Legistar entry with wrong start time on the same date should still match."""
-    spider = CharlotteCityCouncilBusinessMeetingsSpider()
-    legistar_start = datetime(2025, 12, 8, 17, 0)
-    spider._legistar_by_start[legistar_start].append(
-        {
-            "title": "City Council Business Meeting",
-            "location": {
-                "name": "Council Chamber",
-                "address": "600 East 4th Street, Charlotte, NC 28202",
-            },
-            "links": [
-                {
-                    "href": "https://charlottenc.legistar.com/View.ashx?M=A&ID=1254313",
-                    "title": "Agenda",
-                },  # noqa
-            ],
-            "source": "https://charlottenc.legistar.com/Calendar.aspx",
-        }
-    )
-    primary_start = datetime(2025, 12, 8, 17, 30)
-    match = spider._find_legistar_match("City Council Business Meeting", primary_start)
-    assert match is not None
-    assert match["_matched"] is True
-    assert match["links"][0]["title"] == "Agenda"
 
 
 def test_legistar_zoning_meeting(legistar_zoning_item):

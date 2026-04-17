@@ -14,6 +14,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from html import unescape
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import scrapy
 from city_scrapers_core.constants import CANCELLED, NOT_CLASSIFIED
@@ -89,12 +90,22 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             f"Upcoming-Meetings?dlv_City%20Council%20Events%20Listing={filters}"
         )
 
+    def _localize_dt(self, dt):
+        if not dt:
+            return None
+
+        tz = ZoneInfo(self.timezone)
+
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=tz)
+
+        return dt.astimezone(tz)
+
     def _is_within_scrape_range(self, dt):
-        """Return True if dt is on or after Jan 1 of since_year."""
         if not dt:
             return False
-        cutoff = datetime(self.since_year, 1, 1)
-        return dt.replace(tzinfo=None) >= cutoff
+        cutoff = self._localize_dt(datetime(self.since_year, 1, 1))
+        return self._localize_dt(dt) >= cutoff
 
     def start_requests(self):
         yield scrapy.Request(
@@ -219,7 +230,8 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             if not self._legistar_matches_body(body):
                 continue
 
-            start = self.legistar_start(item)
+            start = self._localize_dt(self.legistar_start(item))
+
             if not start or not self._is_within_scrape_range(start):
                 continue
 
@@ -343,11 +355,6 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         primary_request = self._start_primary_if_ready()
         if primary_request:
             yield primary_request
-
-    def _parse_legistar_rows(self, response):
-        """Parse Legistar HTML into _legistar_by_start (used by tests)."""
-        legistar_events = self._parse_legistar_events(response)
-        self.parse_legistar(legistar_events)
 
     def _yield_unmatched_legistar(self):
         """Yield Legistar meetings that had no primary match."""
@@ -519,7 +526,12 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
 
             return datetime(year, month, day)
 
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            self.logger.warning(
+                "Failed to parse datetime from item attributes: %s",
+                e,
+                extra={"item_attributes": item.attrib},
+            )
             return None
 
     def _parse_primary_detail_start(self, response):
@@ -581,10 +593,15 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
     LEGISTAR_TITLE_SIMILARITY_THRESHOLD = 0.55
 
     def _find_legistar_match(self, primary_title, start_dt):
+        """Return best Legistar entry matching title and start time, or None."""
         best = None
         best_score = 0
+        start_dt = self._localize_dt(start_dt)
 
         for key, entries in self._legistar_by_start.items():
+            key = self._localize_dt(key)
+            # abs() gets the absolute value of the time difference, ensuring we compare
+            # the magnitude of time difference regardless of which datetime is earlier
             if (
                 abs((key - start_dt).total_seconds())
                 > self.LEGISTAR_MATCH_WINDOW_MINUTES * 60
@@ -602,6 +619,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         return None
 
     def _title_similarity(self, left, right):
+        """Return 0.0–1.0 similarity score between two meeting titles."""
         left_norm = self._normalize_meeting_title(left)
         right_norm = self._normalize_meeting_title(right)
 
@@ -677,8 +695,31 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         try:
             dt = dateparser(raw, fuzzy=True)
             return dt.replace(tzinfo=None)
-        except Exception:
+        except Exception as e:
+            self.logger.warning(
+                "Failed to parse datetime from raw string: %s",
+                e,
+                extra={"raw_string": raw},
+            )
             return None
+
+    def _get_status(self, meeting):
+        location = meeting.get("location", {})
+        location_text = ""
+
+        if isinstance(location, dict):
+            location_text = f"{location.get('name', '')} {location.get('address', '')}"
+        elif isinstance(location, str):
+            location_text = location
+
+        if location_text and "canceled" in location_text.lower():
+            return CANCELLED
+
+        start = meeting.get("start")
+        if start and start.tzinfo is not None:
+            meeting = {**meeting, "start": start.replace(tzinfo=None)}
+
+        return super()._get_status(meeting)
 
     def _dedupe_links(self, links):
         seen = set()
