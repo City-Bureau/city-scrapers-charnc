@@ -19,6 +19,17 @@ from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 
 
+class _HtmlStripper(HTMLParser):
+    """Minimal HTML-to-text stripper used by _parse_description."""
+
+    def __init__(self):
+        super().__init__()
+        self.chunks = []
+
+    def handle_data(self, data):
+        self.chunks.append(data)
+
+
 class CharncMeckBocSpider(CityScrapersSpider):
     name = "charnc_meck_boc"
     agency = "Mecklenburg County"
@@ -68,6 +79,13 @@ class CharncMeckBocSpider(CityScrapersSpider):
         re.IGNORECASE,
     )
     _street_re = re.compile(r"^\s*\d+\s+")
+    _linebreak_re = re.compile(r"\r?\n")
+    _dupe_comma_re = re.compile(r",\s*,")
+    _editorial_re = re.compile(
+        r"\bREVISED AGENDA\b|\bREVISED\b|\bin-person\b", re.IGNORECASE
+    )
+    _dupe_charlotte_re = re.compile(r",\s*Charlotte\s*,\s*Charlotte")
+    _nc_trail_re = re.compile(r",\s*NC\s*$")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -166,12 +184,15 @@ class CharncMeckBocSpider(CityScrapersSpider):
                 continue
             end = self._parse_dt(attrs, "end_value")
             all_day = self._is_all_day(start, end)
-            links = self._match_legistar_links(title, start)
-            # If start time is midnight (parsing artifact), try real time from Legistar
-            if start and start.time() == datetime.min.time() and not all_day:
-                legistar_event = self._find_matching_legistar_event(title, start.date())
-                if legistar_event:
-                    start = self._parse_legistar_start(legistar_event)
+            legistar_event = self._find_matching_legistar_event(title, start.date())
+            if legistar_event:
+                self._matched_legistar_ids.add(legistar_event.get("EventId"))
+                # If start is midnight (parsing artifact), use real time from Legistar
+                if start.time() == datetime.min.time() and not all_day:
+                    legistar_start = self._parse_legistar_start(legistar_event)
+                    if legistar_start:
+                        start = legistar_start
+            links = self._legistar_links(legistar_event) if legistar_event else []
             meeting = Meeting(
                 title=title,
                 description=self._parse_description(attrs),
@@ -184,27 +205,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
                 links=links,
                 source=attrs.get("absolute_url") or self.legistar_url,
             )
-            # If _clean_title stripped a cancellation prefix (e.g. "WILL NOT BE
-            # HELD:"), force CANCELLED regardless of what _get_status infers.
-            # Otherwise pass raw_title + location + time_notes so _get_status()
-            # can catch "cancel"/"postpone" phrases in any of those fields.
-            loc = meeting["location"]
-            if self._clean_title_re.match(raw_title.strip()):
-                meeting["status"] = CANCELLED
-            else:
-                status_text = " ".join(
-                    filter(
-                        None,
-                        [
-                            raw_title,
-                            loc.get("name"),
-                            loc.get("address"),
-                            meeting["time_notes"],
-                        ],
-                    )
-                )
-                meeting["status"] = self._get_status(meeting, text=status_text)
-            meeting["id"] = self._get_id(meeting)
+            self._finalize_meeting(meeting, raw_title)
             if meeting["id"] in self._seen_ids:
                 continue
             self._seen_ids.add(meeting["id"])
@@ -262,17 +263,9 @@ class CharncMeckBocSpider(CityScrapersSpider):
 
         html = (attrs.get("field_details") or {}).get("value") or ""
         if html:
-
-            class _Stripper(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.chunks = []
-
-                def handle_data(self, data):
-                    self.chunks.append(data)
-
-            stripper = _Stripper()
+            stripper = _HtmlStripper()
             stripper.feed(html)
+            stripper.close()
             body = " ".join(c.strip() for c in stripper.chunks if c.strip())
             if body:
                 parts.append(body)
@@ -315,10 +308,22 @@ class CharncMeckBocSpider(CityScrapersSpider):
         state = (addr.get("administrative_area") or "").strip()
         postal = (addr.get("postal_code") or "").strip()
         city_str = ", ".join(p for p in [city, f"{state} {postal}".strip()] if p)
-        parts = [p for p in [org, line1, line2, city_str] if p]
+        # Route each field into name (building/room) or address (street)
+        # using _street_re to detect lines that start with a house number.
+        name_parts = []
+        street_parts = []
+        for field in [org, line1, line2]:
+            if not field:
+                continue
+            if self._street_re.match(field):
+                street_parts.append(field)
+            else:
+                name_parts.append(field)
+        if city_str:
+            street_parts.append(city_str)
         return {
-            "name": self._normalize_location_name(", ".join(parts)),
-            "address": "",
+            "name": self._normalize_location_name(", ".join(name_parts)),
+            "address": self._normalize_location_name(", ".join(street_parts)),
         }
 
     def _normalize_location_name(self, name):
@@ -328,9 +333,10 @@ class CharncMeckBocSpider(CityScrapersSpider):
         name = name.replace("Freedom Dive", "Freedom Drive")
         name = name.replace("600v E. 4th St", "600 E. 4th St")
         name = name.replace("600 E. 4st", "600 E. 4th St")
-        name = re.sub(r",\s*Charlotte\s*,\s*Charlotte", ", Charlotte", name)
-        name = re.sub(r",\s*NC\s*$", ", NC", name)
-        return name.strip()
+        name = name.replace("Govenment Center", "Government Center")
+        name = self._dupe_charlotte_re.sub(", Charlotte", name)
+        name = self._nc_trail_re.sub(", NC", name)
+        return name.strip(" ,")
 
     def _split_location(self, name):
         """Split a location string into name (building/room) and address (street).
@@ -359,11 +365,10 @@ class CharncMeckBocSpider(CityScrapersSpider):
             return name
         # Replace line breaks with a comma separator, then collapse any resulting
         # double-commas or trailing commas left by a trailing newline in the source.
-        name = re.sub(r"\r?\n", ", ", name)
-        name = re.sub(r",\s*,", ",", name)
+        name = self._linebreak_re.sub(", ", name)
+        name = self._dupe_comma_re.sub(",", name)
         name = name.strip(" ,")
-        for pattern in [r"\bREVISED AGENDA\b", r"\bREVISED\b", r"\bin-person\b"]:
-            name = re.sub(pattern, "", name, flags=re.IGNORECASE)
+        name = self._editorial_re.sub("", name)
         return self._normalize_location_name(name.strip())
 
     def _is_all_day(self, start, end):
@@ -401,14 +406,6 @@ class CharncMeckBocSpider(CityScrapersSpider):
             if len(overlap) >= 2 or (legistar_words and legistar_words <= title_words):
                 return event
         return None
-
-    def _match_legistar_links(self, title, start):
-        """Fuzzy-match title + date against Legistar to pull agenda/minutes links."""
-        legistar_event = self._find_matching_legistar_event(title, start.date())
-        if legistar_event:
-            self._matched_legistar_ids.add(legistar_event.get("EventId"))
-            return self._legistar_links(legistar_event)
-        return []
 
     def _significant_words(self, text):
         words = set(self._significant_words_re.sub(" ", text.lower()).split())
@@ -470,6 +467,10 @@ class CharncMeckBocSpider(CityScrapersSpider):
             links=self._legistar_links(event),
             source=event.get("EventInSiteURL") or self.legistar_url,
         )
+        return self._finalize_meeting(meeting, raw_title)
+
+    def _finalize_meeting(self, meeting, raw_title):
+        """Set status and id on a Meeting in-place; return the meeting."""
         loc = meeting["location"]
         if self._clean_title_re.match(raw_title.strip()):
             meeting["status"] = CANCELLED
@@ -499,7 +500,8 @@ class CharncMeckBocSpider(CityScrapersSpider):
         check = " ".join([item.get("title", ""), text]).lower()
         if any(w in check for w in ["cancel", "rescheduled", "postpone"]):
             return CANCELLED
-        if item["start"] < datetime.now():
+        now_et = datetime.now(tz=self._tz).replace(tzinfo=None)
+        if item["start"] < now_et:
             return PASSED
         return TENTATIVE
 

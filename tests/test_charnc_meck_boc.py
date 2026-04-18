@@ -7,13 +7,15 @@ Test categories:
   C. Filtering logic    – non-meeting events, old events, deduplication
   D. Helper methods     – _clean_title, _is_non_meeting, _parse_classification,
                           _parse_location, _parse_dt, _significant_words,
-                          _parse_legistar_start, _match_legistar_links
+                          _parse_legistar_start, _find_matching_legistar_event,
+                          _legistar_links
   E. Error handling     – invalid JSON, missing/null fields
   F. Request chain      – start_requests, Legistar pagination, parse next-page
   G. Boundary conditions – since_year cutoff, source fallback, cancellation variants
 """
 
 import json
+import re
 from datetime import datetime
 from os.path import dirname, join
 
@@ -106,8 +108,6 @@ def test_schema_end_is_naive_or_none(item):
 @pytest.mark.parametrize("item", parsed_items)
 def test_schema_id_format(item):
     """id must match pattern: spider_name/YYYYMMDDHHMI/x/title_slug."""
-    import re
-
     assert re.match(r"charnc_meck_boc/\d{12}/x/[\w_]+", item["id"])
 
 
@@ -242,18 +242,19 @@ def test_status():
 
 
 def test_location():
+    # line1 is a street → goes to address; line2 is room → goes to name
     assert parsed_items[0]["location"] == {
-        "name": "600 E. 4th St, Meeting Chamber, Charlotte, NC 28202",
-        "address": "",
+        "name": "Meeting Chamber",
+        "address": "600 E. 4th St, Charlotte, NC 28202",
     }
     assert parsed_items[1]["location"] == {
-        "name": "600 E. 4th St, Room 267, Charlotte, NC 28202",
-        "address": "",
+        "name": "Room 267",
+        "address": "600 E. 4th St, Charlotte, NC 28202",
     }
-    # Planning Commission: address_line2 is empty → omitted from name
+    # Planning Commission: address_line2 is empty → name is empty
     assert parsed_items[2]["location"] == {
-        "name": "600 E. 4th St, Charlotte, NC 28202",
-        "address": "",
+        "name": "",
+        "address": "600 E. 4th St, Charlotte, NC 28202",
     }
     # Cancelled event: field_event_address is null → empty location
     assert parsed_items[3]["location"] == {"name": "", "address": ""}
@@ -654,8 +655,8 @@ def test_parse_location_string_value():
     assert result == {"name": "Room 101", "address": ""}
 
 
-def test_parse_location_empty_line2_excluded():
-    """Empty address_line2 must not add a trailing comma or blank slot."""
+def test_parse_location_street_in_line1_splits_correctly():
+    """Street in address_line1 → address; empty line2 → name is empty."""
     s = CharncMeckBocSpider()
     result = s._parse_location(
         {
@@ -668,23 +669,41 @@ def test_parse_location_empty_line2_excluded():
             }
         }
     )
-    assert result == {"name": "600 E. 4th St, Charlotte, NC 28202", "address": ""}
+    assert result == {"name": "", "address": "600 E. 4th St, Charlotte, NC 28202"}
 
 
-def test_parse_location_address_is_always_empty_string():
-    """The 'address' key in location must always be an empty string."""
+def test_parse_location_building_in_line1_street_in_line2():
+    """Building name in line1, street in line2 → name=building, address=street."""
     s = CharncMeckBocSpider()
     result = s._parse_location(
         {
             "field_event_address": {
-                "address_line1": "123 Main St",
+                "address_line1": "Employee Learning Center meeting room",
+                "address_line2": "700 E. Fourth St.",
                 "locality": "Charlotte",
                 "administrative_area": "NC",
                 "postal_code": "28202",
             }
         }
     )
-    assert result["address"] == ""
+    assert result == {
+        "name": "Employee Learning Center meeting room",
+        "address": "700 E. Fourth St., Charlotte, NC 28202",
+    }
+
+
+def test_parse_location_no_street_address_empty():
+    """When no field contains a street number, address must be empty string."""
+    s = CharncMeckBocSpider()
+    result = s._parse_location(
+        {
+            "field_event_address": {
+                "address_line1": "Meeting Room A",
+                "address_line2": "Government Center",
+            }
+        }
+    )
+    assert result == {"name": "Meeting Room A, Government Center", "address": ""}
 
 
 # --- _significant_words ---
@@ -785,13 +804,15 @@ def test_get_status_subject_to_cancellation_not_cancelled():
     assert s._get_status(item) == TENTATIVE
 
 
-# --- _match_legistar_links ---
+# --- _find_matching_legistar_event / _legistar_links ---
 
 
 def test_match_legistar_links_empty_events():
     s = CharncMeckBocSpider()
     s.legistar_events = []
-    assert s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7)) == []
+    date = datetime(2026, 4, 7).date()
+    event = s._find_matching_legistar_event("Board of Commissioners", date)
+    assert (s._legistar_links(event) if event else []) == []
 
 
 def test_match_legistar_links_wrong_date():
@@ -807,7 +828,9 @@ def test_match_legistar_links_wrong_date():
             "EventVideoPath": None,
         }
     ]
-    assert s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7)) == []
+    date = datetime(2026, 4, 7).date()
+    event = s._find_matching_legistar_event("Board of Commissioners", date)
+    assert (s._legistar_links(event) if event else []) == []
 
 
 def test_match_legistar_links_single_word_does_not_match():
@@ -824,7 +847,9 @@ def test_match_legistar_links_single_word_does_not_match():
         }
     ]
     # "Elections Board" shares only "board" with "Board of Commissioners"
-    assert s._match_legistar_links("Elections Board", datetime(2026, 4, 7)) == []
+    date = datetime(2026, 4, 7).date()
+    event = s._find_matching_legistar_event("Elections Board", date)
+    assert (s._legistar_links(event) if event else []) == []
 
 
 def test_match_legistar_links_two_words_match():
@@ -840,10 +865,11 @@ def test_match_legistar_links_two_words_match():
             "EventVideoPath": None,
         }
     ]
-    result = s._match_legistar_links(
+    event = s._find_matching_legistar_event(
         "Mecklenburg Board of County Commissioners Regular Meeting",
-        datetime(2026, 4, 7),
+        datetime(2026, 4, 7).date(),
     )
+    result = s._legistar_links(event) if event else []
     assert result == [
         {"href": "https://example.com/bocc_agenda.pdf", "title": "Agenda"}
     ]
@@ -862,9 +888,10 @@ def test_match_legistar_links_includes_minutes_and_video():
             "EventVideoPath": "https://example.com/video.mp4",
         }
     ]
-    result = s._match_legistar_links(
-        "Mecklenburg Board of County Commissioners Meeting", datetime(2026, 4, 7)
+    event = s._find_matching_legistar_event(
+        "Mecklenburg Board of County Commissioners Meeting", datetime(2026, 4, 7).date()
     )
+    result = s._legistar_links(event) if event else []
     assert result == [
         {"href": "https://example.com/agenda.pdf", "title": "Agenda"},
         {"href": "https://example.com/minutes.pdf", "title": "Minutes"},
@@ -885,9 +912,10 @@ def test_match_legistar_links_no_files_returns_empty():
             "EventVideoPath": None,
         }
     ]
-    result = s._match_legistar_links(
-        "Mecklenburg Board of County Commissioners Meeting", datetime(2026, 4, 7)
+    event = s._find_matching_legistar_event(
+        "Mecklenburg Board of County Commissioners Meeting", datetime(2026, 4, 7).date()
     )
+    result = s._legistar_links(event) if event else []
     assert result == []
 
 
@@ -1045,11 +1073,12 @@ def test_legistar_date_index_built_once():
             "EventVideoPath": None,
         }
     ]
+    date = datetime(2026, 4, 7).date()
     assert s._legistar_by_date is None
-    s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7))
+    s._find_matching_legistar_event("Board of Commissioners", date)
     assert s._legistar_by_date is not None  # index now built
     first_index = id(s._legistar_by_date)
-    s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7))
+    s._find_matching_legistar_event("Board of Commissioners", date)
     assert id(s._legistar_by_date) == first_index  # same object, not rebuilt
 
 
@@ -1057,9 +1086,10 @@ def test_legistar_date_index_empty_events_not_rebuilt():
     """Empty legistar_events must not cause index to rebuild on every call."""
     s = CharncMeckBocSpider()
     s.legistar_events = []
-    s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7))
+    date = datetime(2026, 4, 7).date()
+    s._find_matching_legistar_event("Board of Commissioners", date)
     assert s._legistar_by_date == {}  # built once, stays as empty dict
-    s._match_legistar_links("Board of Commissioners", datetime(2026, 4, 7))
+    s._find_matching_legistar_event("Board of Commissioners", date)
     assert s._legistar_by_date == {}  # still the same empty dict, not None
 
 
