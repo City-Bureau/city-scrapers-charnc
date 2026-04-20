@@ -64,6 +64,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
     past_meetings_url = "https://charlottenc.legistar.com/Calendar.aspx"
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
+        "FEED_EXPORT_ENCODING": "utf-8",
     }
     default_legistar_address = "600 East 4th Street, Charlotte, NC 28202"
 
@@ -145,7 +146,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
                 continue
             is_cancelled = bool(item.css("h3.list-item-title span.canceled-tag"))
             summary = {
-                "source": self._normalize_special_chars(response.urljoin(detail_url)),
+                "source": response.urljoin(detail_url),
                 "is_cancelled": is_cancelled,
                 "description": self._parse_primary_description(item),
             }
@@ -160,7 +161,9 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         current_page = response.meta.get("pageindex", 1)
         next_page = current_page + 1
         next_url = self._build_primary_url(pageindex=next_page)
-        if response.css("div.list-item-container"):
+        # Cap at 50 pages to guard against infinite loops if the site ever
+        # repeats its last page instead of returning an empty terminating page.
+        if response.css("div.list-item-container") and current_page < 50:
             yield scrapy.Request(
                 next_url, callback=self.parse_primary, meta={"pageindex": next_page}
             )
@@ -169,48 +172,49 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
             yield from self._maybe_yield_unmatched()
 
     def parse_primary_detail(self, response):
-        summary = response.meta["summary"]
+        try:
+            summary = response.meta["summary"]
 
-        detail_title = self._parse_detail_title(response)
-        detail_location = self._parse_detail_location(response)
-        time_notes = self._parse_primary_time_notes(response)
+            detail_title = self._parse_detail_title(response)
+            detail_location = self._parse_detail_location(response)
+            time_notes = self._parse_primary_time_notes(response)
 
-        occurrences = self._parse_primary_detail_occurrences(response)
+            occurrences = self._parse_primary_detail_occurrences(response)
 
-        if not occurrences:
-            fallback_start = self._parse_primary_detail_start(response)
-            if fallback_start:
-                occurrences = [{"start": fallback_start, "end": None}]
+            if not occurrences:
+                fallback_start = self._parse_primary_detail_start(response)
+                if fallback_start:
+                    occurrences = [{"start": fallback_start, "end": None}]
 
-        for occ in occurrences:
-            start_dt = occ["start"]
-            end_dt = occ["end"]
+            for occ in occurrences:
+                start_dt = occ["start"]
+                end_dt = occ["end"]
 
-            legistar_match = self._find_legistar_match(detail_title, start_dt)
-            links = legistar_match["links"] if legistar_match else []
+                legistar_match = self._find_legistar_match(detail_title, start_dt)
+                links = legistar_match["links"] if legistar_match else []
 
-            meeting = Meeting(
-                title=detail_title,
-                description=summary["description"],
-                classification=self._parse_classification(None),
-                start=start_dt,
-                end=end_dt,
-                all_day=False,
-                time_notes=time_notes,
-                location=detail_location,
-                links=links,
-                source=summary["source"],
-            )
+                meeting = Meeting(
+                    title=detail_title,
+                    description=summary["description"],
+                    classification=self._parse_classification(None),
+                    start=start_dt,
+                    end=end_dt,
+                    all_day=False,
+                    time_notes=time_notes,
+                    location=detail_location,
+                    links=links,
+                    source=summary["source"],
+                )
 
-            if summary.get("is_cancelled"):
-                meeting["status"] = CANCELLED
-            else:
-                meeting["status"] = self._get_status(meeting)
+                if summary.get("is_cancelled"):
+                    meeting["status"] = CANCELLED
+                else:
+                    meeting["status"] = self._get_status(meeting)
 
-            meeting["id"] = self._get_id(meeting)
-            yield meeting
-
-        self._pending_details -= 1
+                meeting["id"] = self._get_id(meeting)
+                yield meeting
+        finally:
+            self._pending_details -= 1
         yield from self._maybe_yield_unmatched()
 
     def _maybe_yield_unmatched(self):
@@ -367,7 +371,7 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
                     title=entry["title"],
                     description="",
                     classification=self._parse_classification(None),
-                    start=start,
+                    start=start.replace(tzinfo=None),
                     end=None,
                     all_day=False,
                     time_notes="",
@@ -391,29 +395,10 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         categories = item.css("p.tagged-as-list span.text::text").getall()
         return " ".join(c.strip() for c in categories if c.strip())
 
-    def _normalize_special_chars(self, text):
-        if not text:
-            return ""
-        replacements = {
-            "\u2019": "'",  # right single quotation mark
-            "\u2018": "'",  # left single quotation mark
-            "\u201c": '"',  # left double quotation mark
-            "\u201d": '"',  # right double quotation mark
-            "\u2013": "-",  # en dash
-            "\u2014": "-",  # em dash
-            "\u00a0": " ",  # non-breaking space
-            "\u00ae": "",  # registered trademark
-            "\u200b": "",  # zero-width space
-        }
-        for old, new in replacements.items():
-            text = text.replace(old, new)
-        return text
-
     def _clean_text(self, text):
         if not text:
             return ""
         text = unescape(text)
-        text = self._normalize_special_chars(text)
         text = re.sub(r"\s+", " ", text)
         text = re.sub(r"\s+,", ",", text)
         text = re.sub(r",\s+", ", ", text)
@@ -590,7 +575,18 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         )
 
     LEGISTAR_MATCH_WINDOW_MINUTES = 60
-    LEGISTAR_TITLE_SIMILARITY_THRESHOLD = 0.55
+    LEGISTAR_TITLE_SIMILARITY_THRESHOLD = 0.6
+
+    # Accept a title match only if the best candidate scores at least this value.
+    # The score is not raw SequenceMatcher alone: _title_similarity() returns the
+    # stronger of (1) normalized word overlap and (2) SequenceMatcher ratio, after
+    # stripping generic meeting words like "city", "council", and "meeting".
+    #
+    # We keep this threshold near 0.6 because difflib treats ~0.6 as a reasonable
+    # "close match" rule of thumb, and because title matching here is already gated
+    # by a ±60 minute start-time window. In practice this lets us match small
+    # wording differences between the primary site and Legistar without requiring
+    # exact title equality, while still rejecting weak same-day candidates.
 
     def _find_legistar_match(self, primary_title, start_dt):
         """Return best Legistar entry matching title and start time, or None."""
@@ -619,7 +615,20 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         return None
 
     def _title_similarity(self, left, right):
-        """Return 0.0–1.0 similarity score between two meeting titles."""
+        """
+        Score title similarity on a 0.0-1.0 scale.
+
+        Matching strategy:
+        - 1.0 for exact equality after normalization
+        - 0.9 when one normalized title contains the other
+        - otherwise use the higher of:
+            * token overlap ratio
+            * SequenceMatcher character-level ratio
+
+        This hybrid approach handles both wording changes
+        ("Budget Meeting" vs "Budget Committee Meeting")
+        and small string variations/abbreviations.
+        """
         left_norm = self._normalize_meeting_title(left)
         right_norm = self._normalize_meeting_title(right)
 
@@ -629,6 +638,8 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         if left_norm == right_norm:
             return 1.0
 
+        # One title fully contains the other, e.g. "Budget Committee" inside
+        # "Special Budget Committee Meeting".
         if left_norm in right_norm or right_norm in left_norm:
             return 0.9
 
@@ -638,9 +649,13 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         if not left_tokens or not right_tokens:
             return 0
 
+        # Word overlap: shared words / total unique words in the longer title.
         overlap = len(left_tokens & right_tokens) / max(
             len(left_tokens), len(right_tokens)
         )
+        # SequenceMatcher catches structural similarity that word overlap misses,
+        # e.g. "Zoning Mtg" vs "Zoning Meeting" where tokens differ but strings
+        # are close character-by-character.
         seq = SequenceMatcher(None, left_norm, right_norm).ratio()
 
         return max(overlap, seq)
@@ -681,12 +696,6 @@ class CharncCharlotteCitySpiderMixin(LegistarSpider, metaclass=CharlotteCityMixi
         text = re.sub(r"[^\w\s]", " ", text)
         text = re.sub(r"\s+", " ", text)
         return text
-
-    def _extract_js_url(self, js):
-        if not js:
-            return None
-        match = re.search(r"window\.open\(\s*'(.*?)'", js, re.DOTALL)
-        return match.group(1) if match else None
 
     def _safe_parse_datetime(self, raw):
         if not raw:
