@@ -9,7 +9,6 @@ from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.parser import parse as dt_parse
 from dateutil.relativedelta import relativedelta
-from scrapy_playwright.page import PageMethod
 
 
 class CharncMeckSchoolsSpider(CityScrapersSpider):
@@ -26,19 +25,18 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     boarddocs_public_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/Public"
     boarddocs_committee_id = "A4EP6J588C05"
 
-    calendar_url = "https://www.cmsk12.org/board/calendar-for-the-board-of-education"
-    calendar_api_url = "https://www.cmsk12.org/fs/elements/241856"
-    calendar_page_id = "29911"
-    calendar_parent_id = "241856"
+    # Finalsite calendar API - element 236115 provides full event details
+    calendar_api_base_url = "https://www.cmsk12.org/fs/elements/236115"
+    calendar_api_params = {
+        "is_draft": "false",
+        "cal_date": "{cal_date}",  # Format: YYYY-MM-DD
+        "is_load_more": "true",
+        "page_id": "29911",
+        "parent_id": "236115",
+        "_": "{cache_buster}",
+    }
 
     custom_settings = {
-        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
-        "DOWNLOAD_HANDLERS": {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-        },
-        "PLAYWRIGHT_BROWSER_TYPE": "chromium",
-        "PLAYWRIGHT_LAUNCH_OPTIONS": {"headless": True},
         "ROBOTSTXT_OBEY": False,
         "DOWNLOAD_DELAY": 1,
     }
@@ -96,10 +94,9 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 callback=self._parse_boarddocs_detail,
             )
 
-        # Yield Finalsite calendar requests starting from the month that
-        # contains the day after the last BoardDocs date.  Events on or before
-        # last_boarddocs_date are filtered out per-event in _parse_calendar so
-        # there is no overlap between the two sources.
+        # Yield Finalsite calendar requests starting from the day after the
+        # last BoardDocs meeting through months_ahead from today.
+        # This prevents duplicates between BoardDocs and calendar sources.
         today = datetime.now(tz=ZoneInfo(self.timezone))
         start_date = (self.last_boarddocs_date + relativedelta(days=1)).replace(day=1)
         end_date = (today + relativedelta(months=self.months_ahead)).date()
@@ -108,15 +105,18 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         while current_date <= end_date:
             cal_date = current_date.strftime("%Y-%m-01")
             cache_buster = random.randint(10**12, 10**13 - 1)
-            calendar_api_url = (
-                f"{self.calendar_api_url}?"
-                f"is_draft=false&"
-                f"cal_date={cal_date}&"
-                f"is_load_more=true&"
-                f"page_id={self.calendar_page_id}&"
-                f"parent_id={self.calendar_parent_id}&"
-                f"_={cache_buster}"
-            )
+
+            # Build URL from base URL and parameters
+            params = [
+                f"is_draft={self.calendar_api_params['is_draft']}",
+                f"cal_date={cal_date}",
+                f"is_load_more={self.calendar_api_params['is_load_more']}",
+                f"page_id={self.calendar_api_params['page_id']}",
+                f"parent_id={self.calendar_api_params['parent_id']}",
+                f"_={cache_buster}",
+            ]
+            calendar_api_url = f"{self.calendar_api_base_url}?{'&'.join(params)}"
+
             yield scrapy.Request(
                 url=calendar_api_url,
                 callback=self._parse_calendar,
@@ -345,32 +345,22 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         return {"name": "", "address": ""}
 
     def _parse_calendar(self, response):
-        # Get date filtering info
-        last_bd_date = self.last_boarddocs_date
+        # Filter calendar events to only include those AFTER the last BoardDocs
+        # meeting date through months_ahead from today.
         today = datetime.now(tz=ZoneInfo(self.timezone))
+        last_bd_date = self.last_boarddocs_date
         end_date = (today + relativedelta(months=self.months_ahead)).date()
 
         # Select calendar events from API response.
-        # Element 241856 (list view) returns article elements that include
-        # a div.fsLocation for location data.
-        all_events = response.css("article")
-        self.logger.info(f"Found {len(all_events)} calendar events")
+        # Element 236115 returns events in a calendar grid format
+        all_event_links = response.css("a.fsCalendarEventLink")
+        self.logger.info(f"Found {len(all_event_links)} calendar events")
 
-        for event_article in all_events:
+        for event_link in all_event_links:
             try:
-                # Get the primary event link (not the "Read More" link).
-                # The first fsCalendarEventLink in the article is the title link;
-                # the second (fsReadMoreLink) is the "Read More" link.
-                event_links = event_article.css(
-                    "a.fsCalendarEventLink:not(.fsReadMoreLink)"
-                )
-                if not event_links:
-                    continue
-                event_link = event_links[0]
-
                 title_elem = event_link.css("::text").get()
-                if not title_elem:
-                    self.logger.debug("Skipping event with no title")
+                if not title_elem or title_elem.strip() == "Read More":
+                    self.logger.debug("Skipping event with no title or Read More link")
                     continue
 
                 # Parse data-occur-id format: eventId_startISO_endISO
@@ -399,12 +389,9 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     self.logger.warning(f"Failed to parse times from {occur_id}: {e}")
                     continue
 
-                # Filter: only meetings after last BoardDocs date
-                if start.date() <= last_bd_date:
-                    continue
-
-                # Filter: only meetings within date range
-                if start.date() > end_date:
+                # Filter: only meetings AFTER last BoardDocs date
+                # and within months_ahead
+                if start.date() <= last_bd_date or start.date() > end_date:
                     continue
 
                 # Extract title and time notes from title text.
@@ -412,16 +399,12 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     title_elem
                 )
 
-                # Prefer location from div.fsLocation element (available in the
-                # list view / element 241856 API). Fall back to any location
-                # parsed from the event title.
-                location_text = event_article.css("div.fsLocation::text").get()
-                if location_text and location_text.strip():
-                    location = self._parse_calendar_location(location_text.strip())
-                else:
-                    location = title_location
+                # Element 236115 (grid view) doesn't include fsLocation in the grid,
+                # so we rely on location parsed from the event title.
+                # The full location will be fetched from the detail API call.
+                location = title_location
 
-                # Preliminary Meeting id (used for dedup before Playwright fetch)
+                # Preliminary Meeting id (used for deduplication)
                 temp_meeting = Meeting(
                     title=title,
                     description="",
@@ -432,7 +415,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     time_notes=time_notes,
                     location=location,
                     links=[],
-                    source=self.calendar_url,
+                    source=self.calendar_api_base_url,
                 )
                 temp_meeting["status"] = self._get_status(temp_meeting)
                 temp_meeting["id"] = self._get_id(temp_meeting)
@@ -442,24 +425,23 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     continue
                 self.seen_ids.add(temp_meeting["id"])
 
-                # Yield a Playwright request to fetch the full event detail
-                # (description and street-level location) from the JS modal.
-                event_id = occur_id.split("_")[0]
-                occur_date = start.strftime("%Y-%m-%d")
-                detail_url = f"{self.calendar_url}?event={event_id}&occur={occur_date}"
+                # Fetch full event detail from the API using occur_id
+                cache_buster = random.randint(10**12, 10**13 - 1)
+
+                # Build detail URL with occur_id parameter
+                params = [
+                    f"occur_id={occur_id}",
+                    "show_ath_event=false",
+                    "show_event=true",
+                    f"is_draft={self.calendar_api_params['is_draft']}",
+                    f"_={cache_buster}",
+                ]
+                detail_url = f"{self.calendar_api_base_url}?{'&'.join(params)}"
+
                 yield scrapy.Request(
                     url=detail_url,
-                    callback=self._parse_calendar_event_page,
+                    callback=self._parse_calendar_event_detail,
                     meta={
-                        "playwright": True,
-                        "playwright_include_page": True,
-                        "playwright_page_methods": [
-                            PageMethod(
-                                "wait_for_selector",
-                                "article",
-                                timeout=10000,
-                            ),
-                        ],
                         "event_data": {
                             "title": title,
                             "location": location,
@@ -477,75 +459,41 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             except Exception as e:
                 self.logger.error(f"Failed to parse calendar event: {e}", exc_info=True)
 
-    async def _parse_calendar_event_page(self, response):
-        """Use Playwright to open the event modal and extract description/location.
+    def _parse_calendar_event_detail(self, response):
+        """Parse event detail from the API response.
 
-        The Finalsite calendar loads event body text and detailed location
-        (including street address) only through a JavaScript modal.  This
-        callback clicks the event title link, waits for the modal to appear,
-        and harvests the content before closing the modal.
+        The element 236115 API returns full event details including description
+        and location when called with the occur_id parameter.
         """
-        page = response.meta["playwright_page"]
         event_data = response.meta["event_data"]
-        occur_id = event_data["occur_id"]
 
         description = ""
         location = event_data["location"]
 
         try:
-            # Click the event title link (not the "Read More" button) to open
-            # the Finalsite modal for this specific occurrence.
-            event_selector = (
-                f'a.fsCalendarEventLink[data-occur-id="{occur_id}"]'
-                ":not(.fsReadMoreLink)"
-            )
-            await page.click(event_selector, timeout=8000)
+            # Extract description from the API response
+            # The response contains the full event body text
+            body_text = response.css("article ::text").getall()
+            if body_text:
+                # Filter out navigation/header text and join paragraphs
+                description = " ".join([t.strip() for t in body_text if t.strip()])
+                # Remove common header text
+                description = re.sub(
+                    r"^District Events Calendar\s*", "", description
+                ).strip()
+                description = re.sub(r"^Calendar RSS Feeds\s*", "", description).strip()
 
-            # Wait for the modal body to appear.
-            modal_body_selector = (
-                ".fsModal .fsBody, .fsModal .fsDescription, "
-                ".fsLightbox .fsBody, [class*='EventModal'] .fsBody"
-            )
-            await page.wait_for_selector(modal_body_selector, timeout=8000)
-
-            # Extract description paragraphs from the modal body.
-            modal_text = await page.inner_text(
-                modal_body_selector.split(",")[0].strip()
-            )
-            if modal_text:
-                description = modal_text.strip()
-
-            # Try to get a more detailed location (with street address) from
-            # the modal if present.
-            try:
-                modal_loc = await page.inner_text(
-                    ".fsModal .fsLocation, .fsLightbox .fsLocation"
-                )
-                if modal_loc and modal_loc.strip():
-                    location = self._parse_calendar_location(modal_loc.strip())
-            except Exception:
-                pass  # Fall back to the location already parsed from the list view
-
-            # Close the modal gracefully.
-            try:
-                close_selector = (
-                    "button[aria-label='Close'], .fsModalClose, "
-                    ".fsClose, button.fsCloseButton"
-                )
-                await page.click(close_selector, timeout=3000)
-            except Exception:
-                await page.keyboard.press("Escape")
-
-            await page.wait_for_timeout(300)
+            # Try to get location from the response
+            location_text = response.css(".fsLocation::text").get()
+            if location_text and location_text.strip():
+                location = self._parse_calendar_location(location_text.strip())
 
         except Exception as e:
             self.logger.warning(
-                f"Playwright modal interaction failed for {occur_id}: {e}"
+                f"Failed to parse event detail for {event_data['occur_id']}: {e}"
             )
-        finally:
-            await page.close()
 
-        # If modal gave us a description but location still has no address,
+        # If we got a description but location still has no address,
         # try to extract the address from the description text.
         if description and not location.get("address"):
             parsed = self._parse_location(description)
@@ -562,7 +510,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             time_notes=event_data["time_notes"],
             location=location,
             links=[],
-            source=self.calendar_url,
+            source=self.calendar_api_base_url,
         )
         meeting["status"] = event_data["meeting_status"]
         meeting["id"] = event_data["meeting_id"]
