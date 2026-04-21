@@ -39,6 +39,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
         "DOWNLOAD_DELAY": 1,
+        "FEED_EXPORT_ENCODING": "utf-8",
     }
 
     def __init__(self, *args, **kwargs):
@@ -181,6 +182,12 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             if title_location["name"] or title_location["address"]
             else self._parse_location(raw_description)
         )
+        # If location was found via title but has no address, try to extract
+        # it from the description (BoardDocs often includes address there).
+        if location["name"] and not location["address"]:
+            desc_location = self._parse_location(raw_description)
+            if desc_location.get("address"):
+                location = {**location, "address": desc_location["address"]}
 
         meeting = Meeting(
             title=title,
@@ -228,10 +235,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         # patterns like "-- 6:00pm (Closed Session at 4:00pm) -"
         title = re.sub(r"\s*\([^)]*\)\s*[-–]*\s*$", "", title)
 
-        # Match: [-- or -] time [-- or -] optional_location at end of string
+        # Match: [-- or -] [optional day "Monday at"] time [-- or -] optional_location
         # The [^-–] ensures location doesn't start with another dash
         time_loc_match = re.search(
-            r"\s*[-–]{1,2}\s*(\d{1,2}:\d{2}\s*[aApP][mM])"
+            r"\s*[-–]{1,2}\s*(?:\w+\s+at\s+)?(\d{1,2}:\d{2}\s*[aApP][mM])"
             r"(?:\s*[-–]+\s*([^-–].+?))?\s*[-–]*\s*$",
             title,
             re.IGNORECASE,
