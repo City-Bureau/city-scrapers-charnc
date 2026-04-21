@@ -318,3 +318,53 @@ def test_parse_calendar_location_chamber_without_room(spider):
     loc = spider._parse_calendar_location("CMGC Chamber")
     assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
     assert "CHAMBER" in loc["name"]
+
+
+# ---------------------------------------------------------------------------
+# Calendar event filtering tests
+# ---------------------------------------------------------------------------
+
+
+def test_is_board_meeting_with_board_keyword(spider):
+    """Meetings with 'Board' in title should be included."""
+    assert spider._is_board_meeting("Regular Meeting of the Board") is True
+    assert spider._is_board_meeting("Board Meeting") is True
+    assert spider._is_board_meeting("board retreat") is True
+
+
+def test_is_board_meeting_with_special_keyword(spider):
+    """Meetings with 'Special' in title should be included."""
+    assert spider._is_board_meeting("Special Meeting of the Board") is True
+    assert spider._is_board_meeting("Special Session") is True
+
+
+def test_is_board_meeting_with_committee_keyword(spider):
+    """Meetings with 'Committee' in title should be included."""
+    assert (
+        spider._is_board_meeting("Family & Community Engagement Committee Meeting")
+        is True
+    )
+    assert spider._is_board_meeting("Policy Committee Meeting") is True
+    assert spider._is_board_meeting("committee session") is True
+
+
+def test_is_board_meeting_excludes_non_board_events(spider):
+    """Non-board events should be filtered out."""
+    assert spider._is_board_meeting("Teacher Workday") is False
+    assert spider._is_board_meeting("Memorial Day") is False
+    assert spider._is_board_meeting("Q4 Ends") is False
+    assert spider._is_board_meeting("Student Holiday") is False
+    assert spider._is_board_meeting("Professional Development Day") is False
+
+
+def test_is_board_meeting_case_insensitive(spider):
+    """Filtering should be case insensitive."""
+    assert spider._is_board_meeting("BOARD MEETING") is True
+    assert spider._is_board_meeting("special meeting") is True
+    assert spider._is_board_meeting("Committee Meeting") is True
+
+
+def test_is_board_meeting_with_empty_title(spider):
+    """Empty or None titles should return False."""
+    assert spider._is_board_meeting("") is False
+    assert spider._is_board_meeting(None) is False

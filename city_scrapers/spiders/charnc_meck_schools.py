@@ -149,6 +149,18 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         filtered_data.sort(key=lambda x: x.get("numberdate", ""))
         return filtered_data
 
+    def _is_board_meeting(self, title):
+        """Filter meetings using fuzzy match on title keywords.
+
+        Returns True if title contains any of: Special, Board, Committee
+        (case insensitive)
+        """
+        if not title:
+            return False
+        title_lower = title.lower()
+        keywords = ["special", "board", "committee"]
+        return any(keyword in title_lower for keyword in keywords)
+
     def _parse_boarddocs_detail(self, response):
         raw_description = " ".join(response.css(".meeting-description::text").getall())
         meeting_id = response.meta["meeting_id"]
@@ -268,7 +280,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         # Prefer time extracted from title — more reliable than description
         if title_time_str:
             try:
-                return dt_parse(f"{date} {title_time_str}", ignoretz=True)
+                # Normalize time string: remove extra spaces, ensure proper format
+                normalized_time = re.sub(r"\s+", " ", title_time_str.strip())
+                # Handle formats like "8:00am", "8:00 am", "8am", "8 am"
+                normalized_time = re.sub(
+                    r"([ap])\.?m\.?", r"\1m", normalized_time, flags=re.IGNORECASE
+                )
+                return dt_parse(f"{date} {normalized_time}", ignoretz=True)
             except Exception as e:
                 self.logger.warning(
                     f"Failed to parse title time '{title_time_str}': {e}"
@@ -277,13 +295,21 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         # Fall back: search description for the main meeting time, skipping
         # closed-session / preparatory times that appear earlier in the text
         description = raw_description.lower()
-        # Find all times, prefer the last one (main meeting usually listed last)
-        time_matches = list(
-            re.finditer(r"(\d{1,2}:\d{2})\s*([AaPp]\.?[Mm]\.?)", description)
-        )
+
+        # Improved regex to match various time formats:
+        # - "8:00am", "8:00 am", "8:00 a.m.", "8:00 a.m"
+        # - "8am", "8 am", "8 a.m."
+        # - Handles optional spaces and periods
+        time_pattern = r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?"
+        time_matches = list(re.finditer(time_pattern, description))
+
         if time_matches:
+            # Prefer the last match (main meeting usually listed last)
             m = time_matches[-1]
-            time_str = f"{m.group(1)} {m.group(2).replace('.', '')}"
+            hour = m.group(1)
+            minute = m.group(2) if m.group(2) else "00"
+            meridiem = m.group(3).upper() + "M"
+            time_str = f"{hour}:{minute} {meridiem}"
             try:
                 return dt_parse(f"{date} {time_str}", ignoretz=True)
             except Exception as e:
@@ -405,6 +431,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 title, title_location, time_notes = self._parse_calendar_title_details(
                     title_elem
                 )
+
+                # Filter: only include meetings with Special/Board/Committee keywords
+                if not self._is_board_meeting(title):
+                    self.logger.debug(f"Skipping non-board meeting: {title}")
+                    continue
 
                 # Element 236115 (grid view) doesn't include fsLocation in the grid,
                 # so we rely on location parsed from the event title.
