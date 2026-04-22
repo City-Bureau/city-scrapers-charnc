@@ -5,7 +5,10 @@ source.
 Required class variables on child spiders:
     name (str): Spider name/slug
     agency (str): Full agency name
-    id (str): Unique identifier for the spider
+    category_label (str): Event category label used to filter the primary site
+    classification (str): Meeting classification constant from city_scrapers_core
+    legistar_bodies (list of str): Legistar body names to match when collecting
+        past meetings
 """
 
 import re
@@ -38,8 +41,8 @@ class CharlotteCityMixinMeta(type):
             for base in bases
         ):
             required_static_vars = [
-                "agency",
                 "name",
+                "agency",
                 "category_label",
                 "classification",
                 "legistar_bodies",
