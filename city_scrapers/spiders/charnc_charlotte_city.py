@@ -5,7 +5,7 @@ from city_scrapers.mixins.charnc_charlotte_city import CharncCharlotteCitySpider
 spider_configs = [
     {
         "class_name": "CharlotteCityCouncilBusinessMeetingsSpider",
-        "name": "charlotte_city_council_business_meetings",
+        "name": "charnc_city_council_business_meetings",
         "agency": "Charlotte City Council Business Meetings",
         "category_label": "City Council Business Meeting",
         "classification": CITY_COUNCIL,
@@ -15,7 +15,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteCityCouncilCommitteeMeetingsSpider",
-        "name": "charlotte_city_council_committee_meetings",
+        "name": "charnc_city_council_committee_meetings",
         "agency": "Charlotte City Council Committee Meetings",
         "category_label": "City Council Committee Meeting",
         "classification": COMMITTEE,
@@ -32,7 +32,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteCityCouncilStrategySessionSpider",
-        "name": "charlotte_city_council_strategy_session",
+        "name": "charnc_city_council_strategy_session",
         "agency": "Charlotte City Council Strategy Session",
         "category_label": "City Council Strategy Session",
         "classification": CITY_COUNCIL,
@@ -43,7 +43,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteCityZoningMeetingsSpider",
-        "name": "charlotte_city_zoning_meetings",
+        "name": "charnc_city_zoning_meetings",
         "agency": "Charlotte City Zoning Meeting",
         "category_label": "City Council Zoning Meeting",
         "classification": CITY_COUNCIL,
@@ -53,7 +53,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteAdvisoryBoardSpider",
-        "name": "charlotte_advisory_board",
+        "name": "charnc_advisory_board",
         "agency": "Charlotte Advisory Board Meetings",
         "category_label": "Advisory Board",
         "classification": BOARD,
@@ -61,7 +61,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteMajorEventsSpider",
-        "name": "charlotte_major_events",
+        "name": "charnc_major_events",
         "agency": "Charlotte Major Events",
         "category_label": "Major events",
         "classification": NOT_CLASSIFIED,
@@ -69,7 +69,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteTalksAndWorkshopsSpider",
-        "name": "charlotte_talks_and_workshops",
+        "name": "charnc_talks_and_workshops",
         "agency": "Charlotte Talks and Workshops",
         "category_label": "Talks & workshops",
         "classification": NOT_CLASSIFIED,
@@ -77,7 +77,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteProjectPublicMeetingsSpider",
-        "name": "charlotte_project_public_meetings",
+        "name": "charnc_project_public_meetings",
         "agency": "Charlotte Project Public Meetings",
         "category_label": "Project Public Meeting",
         "classification": NOT_CLASSIFIED,
@@ -85,7 +85,7 @@ spider_configs = [
     },
     {
         "class_name": "CharlotteTownHallSpider",
-        "name": "charlotte_town_hall",
+        "name": "charnc_town_hall",
         "agency": "Charlotte Town Hall Meetings",
         "category_label": "Town Hall",
         "classification": NOT_CLASSIFIED,

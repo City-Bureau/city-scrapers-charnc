@@ -200,7 +200,7 @@ def test_primary_detail_safety_committee(safety_committee_item):
     assert item["status"] == "tentative"
     assert (
         item["id"]
-        == "charlotte_city_council_committee_meetings/202703011300/x/safety_committee"
+        == "charnc_city_council_committee_meetings/202703011300/x/safety_committee"
     )
 
 
@@ -236,7 +236,7 @@ def test_primary_detail_strategy_session_with_legistar_agenda(strategy_session_i
     )
     assert item["status"] == "passed"
     assert (
-        item["id"] == "charlotte_city_council_strategy_session/202603020900/x/"
+        item["id"] == "charnc_city_council_strategy_session/202603020900/x/"
         "special_meeting_notice_city_council_annual_strategy_meeting_day_1_"
     )
 
@@ -287,7 +287,7 @@ def test_primary_detail_crtpo_policy_board(crtpo_policy_board_item):
         == "https://www.charlottenc.gov/Events-directory/CRTPO-Policy-Board"
     )
     assert item["status"] == "tentative"
-    assert item["id"] == "charlotte_advisory_board/202610211800/x/crtpo_policy_board"
+    assert item["id"] == "charnc_advisory_board/202610211800/x/crtpo_policy_board"
 
 
 def test_primary_detail_airport_neighborhood_committee_meeting(
@@ -317,6 +317,6 @@ def test_primary_detail_airport_neighborhood_committee_meeting(
     )
     assert item["status"] == "tentative"
     assert (
-        item["id"] == "charlotte_project_public_meetings/202612171800/x/"
+        item["id"] == "charnc_project_public_meetings/202612171800/x/"
         "airport_neighborhood_committee_anc_meeting"
     )
