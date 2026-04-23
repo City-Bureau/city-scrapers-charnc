@@ -124,8 +124,8 @@ def test_source(parsed_items):
 def test_links(parsed_items):
     links = parsed_items[0]["links"]
     assert len(links) == 1
-    assert links[0]["title"] == "Download Agenda as PDF"
-    assert "DSNPR265CF98" in links[0]["href"]
+    assert links[0]["title"] == "Agenda"
+    assert "AGENDA123" in links[0]["href"]
     assert not any(lnk["title"] == "Agenda Item" for lnk in links)
 
 
@@ -205,8 +205,10 @@ def test_calendar_cmgc_event_data(calendar_items):
     assert regular_meeting["location"]["name"].startswith(
         "Charlotte-Mecklenburg Government Center"
     )
-    # Address populated from detail API call
-    assert regular_meeting["location"]["address"] == ""
+    # Address is now hardcoded for CMGC
+    assert (
+        regular_meeting["location"]["address"] == CharncMeckSchoolsSpider.cmgc_address
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +234,8 @@ def test_parse_calendar_title_details_cmgc(spider):
     assert title == "Regular Meeting of the Board"
     assert notes == "Closed Session at 4:00pm"
     assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
-    assert (
-        loc["address"] == ""
-    )  # no description text available; address only populated via _parse_location
+    # Address is now hardcoded for CMGC
+    assert loc["address"] == CharncMeckSchoolsSpider.cmgc_address
 
 
 def test_parse_calendar_location_pipe_format(spider):
@@ -255,9 +256,8 @@ def test_parse_calendar_location_cmgc_with_room(spider):
     loc = spider._parse_calendar_location("CMGC Chamber Room")
     assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
     assert "CHAMBER ROOM" in loc["name"]
-    assert (
-        loc["address"] == ""
-    )  # no description text available; address only populated via _parse_location
+    # Address is now hardcoded for CMGC
+    assert loc["address"] == CharncMeckSchoolsSpider.cmgc_address
 
 
 def test_parse_location_cmgc_extracts_address_from_description(spider):

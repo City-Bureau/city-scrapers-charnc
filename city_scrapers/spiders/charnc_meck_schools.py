@@ -27,6 +27,10 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
     # Finalsite calendar API - element 236115 provides full event details
     calendar_api_base_url = "https://www.cmsk12.org/fs/elements/236115"
+    calendar_public_url = "https://www.cmsk12.org/calendar"
+
+    # Charlotte-Mecklenburg Government Center address
+    cmgc_address = "600 East 4th Street Charlotte, NC 28202"
     calendar_api_params = {
         "is_draft": "false",
         "cal_date": "{cal_date}",  # Format: YYYY-MM-DD
@@ -181,6 +185,48 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             callback=self._parse_boarddocs_meeting,
         )
 
+    def _create_meeting(
+        self,
+        title,
+        description,
+        start,
+        end=None,
+        time_notes="",
+        location=None,
+        links=None,
+        source=None,
+    ):
+        """Create a Meeting object with status and id populated.
+
+        Args:
+            title: Meeting title
+            description: Meeting description
+            start: Start datetime
+            end: End datetime (optional)
+            time_notes: Additional time information (optional)
+            location: Location dict with name and address (optional)
+            links: List of link dicts (optional)
+            source: Source URL (optional)
+
+        Returns:
+            Meeting object with status and id fields populated
+        """
+        meeting = Meeting(
+            title=title,
+            description=description,
+            classification=BOARD,
+            start=start,
+            end=end,
+            all_day=False,
+            time_notes=time_notes,
+            location=location or {"name": "", "address": ""},
+            links=links or [],
+            source=source or self.boarddocs_public_url,
+        )
+        meeting["status"] = self._get_status(meeting, text=description)
+        meeting["id"] = self._get_id(meeting)
+        return meeting
+
     def _parse_boarddocs_meeting(self, response):
         raw_description = response.meta["raw_description"]
         raw_title = response.meta["raw_title"]
@@ -201,21 +247,14 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             if desc_location.get("address"):
                 location = {**location, "address": desc_location["address"]}
 
-        meeting = Meeting(
+        meeting = self._create_meeting(
             title=title,
             description=raw_description.strip(),
-            classification=BOARD,
             start=start,
-            end=None,
-            all_day=False,
-            time_notes="",
             location=location,
             links=self._parse_links(response, meeting_id),
             source=self.boarddocs_public_url,
         )
-
-        meeting["status"] = self._get_status(meeting, text=raw_description)
-        meeting["id"] = self._get_id(meeting)
 
         # Skip duplicates
         if meeting["id"] not in self.seen_ids:
@@ -280,13 +319,26 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         # Prefer time extracted from title — more reliable than description
         if title_time_str:
             try:
-                # Normalize time string: remove extra spaces, ensure proper format
-                normalized_time = re.sub(r"\s+", " ", title_time_str.strip())
-                # Handle formats like "8:00am", "8:00 am", "8am", "8 am"
-                normalized_time = re.sub(
-                    r"([ap])\.?m\.?", r"\1m", normalized_time, flags=re.IGNORECASE
+                # Use regex to extract time components for more reliable parsing
+                time_match = re.search(
+                    r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?",
+                    title_time_str,
+                    re.IGNORECASE,
                 )
-                return dt_parse(f"{date} {normalized_time}", ignoretz=True)
+                if time_match:
+                    hour = int(time_match.group(1))
+                    minute = int(time_match.group(2)) if time_match.group(2) else 0
+                    meridiem = time_match.group(3).lower()
+
+                    # Convert to 24-hour format
+                    if meridiem == "p" and hour != 12:
+                        hour += 12
+                    elif meridiem == "a" and hour == 12:
+                        hour = 0
+
+                    # Parse the date and combine with time
+                    parsed_date = dt_parse(date, ignoretz=True)
+                    return parsed_date.replace(hour=hour, minute=minute)
             except Exception as e:
                 self.logger.warning(
                     f"Failed to parse title time '{title_time_str}': {e}"
@@ -306,12 +358,19 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         if time_matches:
             # Prefer the last match (main meeting usually listed last)
             m = time_matches[-1]
-            hour = m.group(1)
-            minute = m.group(2) if m.group(2) else "00"
-            meridiem = m.group(3).upper() + "M"
-            time_str = f"{hour}:{minute} {meridiem}"
+            hour = int(m.group(1))
+            minute = int(m.group(2)) if m.group(2) else 0
+            meridiem = m.group(3).lower()
+
+            # Convert to 24-hour format
+            if meridiem == "p" and hour != 12:
+                hour += 12
+            elif meridiem == "a" and hour == 12:
+                hour = 0
+
             try:
-                return dt_parse(f"{date} {time_str}", ignoretz=True)
+                parsed_date = dt_parse(date, ignoretz=True)
+                return parsed_date.replace(hour=hour, minute=minute)
             except Exception as e:
                 self.logger.warning(f"Failed to parse datetime: {e}")
 
@@ -443,20 +502,15 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 location = title_location
 
                 # Preliminary Meeting id (used for deduplication)
-                temp_meeting = Meeting(
+                temp_meeting = self._create_meeting(
                     title=title,
                     description="",
-                    classification=BOARD,
                     start=start,
                     end=end,
-                    all_day=False,
                     time_notes=time_notes,
                     location=location,
-                    links=[],
-                    source=self.calendar_api_base_url,
+                    source=self.calendar_public_url,
                 )
-                temp_meeting["status"] = self._get_status(temp_meeting)
-                temp_meeting["id"] = self._get_id(temp_meeting)
 
                 if temp_meeting["id"] in self.seen_ids:
                     self.logger.debug(f"Skipping duplicate event: {title} on {start}")
@@ -538,18 +592,16 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             if parsed.get("address"):
                 location = {**location, "address": parsed["address"]}
 
-        meeting = Meeting(
+        meeting = self._create_meeting(
             title=event_data["title"],
             description=description,
-            classification=BOARD,
             start=event_data["start"],
             end=event_data["end"],
-            all_day=False,
             time_notes=event_data["time_notes"],
             location=location,
-            links=[],
-            source=self.calendar_api_base_url,
+            source=self.calendar_public_url,
         )
+        # Override with pre-calculated status and id from temp_meeting
         meeting["status"] = event_data["meeting_status"]
         meeting["id"] = event_data["meeting_id"]
         yield meeting
@@ -613,7 +665,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             room = f", {room_match.group(0).upper()}" if room_match else ""
             return {
                 "name": f"Charlotte-Mecklenburg Government Center{room}",
-                "address": "",
+                "address": self.cmgc_address,
             }
 
         # Handle "Name | City, State" format used by Finalsite calendar
@@ -628,11 +680,15 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         return {"name": location_text, "address": ""}
 
     def _parse_links(self, response, meeting_id=""):
-        if not meeting_id:
-            return []
-        return [
-            {
-                "title": "Download Agenda as PDF",
-                "href": self.boarddocs_attachment_url.format(attachment_id=meeting_id),
-            }
-        ]
+        attachments = []
+        agenda_id = response.css("li.ui-corner-all::attr(unique)").get()
+        if agenda_id:
+            attachments.append(
+                {
+                    "title": "Agenda",
+                    "href": self.boarddocs_attachment_url.format(
+                        attachment_id=agenda_id
+                    ),
+                }
+            )
+        return attachments
