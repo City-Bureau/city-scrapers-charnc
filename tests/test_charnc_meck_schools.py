@@ -274,14 +274,14 @@ def test_parse_location_cmgc_extracts_address_from_description(spider):
 
 
 def test_parse_location_cmgc_no_address_in_description(spider):
-    """When description has no address, address is left empty."""
+    """When description has no address, fallback to known CMGC address."""
     description = (
         "The Board will meet in person in the Chamber Room of the "
         "Charlotte-Mecklenburg Government Center."
     )
     loc = spider._parse_location(description)
     assert loc["name"].startswith("Charlotte-Mecklenburg Government Center")
-    assert loc["address"] == ""
+    assert loc["address"] == "600 East 4th Street Charlotte, NC 28202"
 
 
 def test_parse_title_removes_trailing_dash(spider):

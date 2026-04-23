@@ -179,7 +179,6 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                 "raw_title": raw_title,
                 "meeting_date": meeting_date,
                 "raw_description": raw_description,
-                "meeting_id": meeting_id,
                 "source": "boarddocs",
             },
             callback=self._parse_boarddocs_meeting,
@@ -231,7 +230,6 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         raw_description = response.meta["raw_description"]
         raw_title = response.meta["raw_title"]
         meeting_date = response.meta["meeting_date"]
-        meeting_id = response.meta.get("meeting_id", "")
 
         title, title_time_str, title_location = self._parse_boarddocs_title(raw_title)
         start = self._parse_start(raw_description, meeting_date, title_time_str)
@@ -252,7 +250,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             description=raw_description.strip(),
             start=start,
             location=location,
-            links=self._parse_links(response, meeting_id),
+            links=self._parse_links(response),
             source=self.boarddocs_public_url,
         )
 
@@ -407,7 +405,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             address_match = re.search(address_pattern, raw_description, re.IGNORECASE)
             return {
                 "name": name,
-                "address": address_match.group(1).strip() if address_match else "",
+                "address": (
+                    address_match.group(1).strip()
+                    if address_match
+                    else self.cmgc_address
+                ),
             }
 
         # Only treat as virtual when the meeting itself is virtual, not just
@@ -679,7 +681,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         return {"name": location_text, "address": ""}
 
-    def _parse_links(self, response, meeting_id=""):
+    def _parse_links(self, response):
         attachments = []
         agenda_id = response.css("li.ui-corner-all::attr(unique)").get()
         if agenda_id:
