@@ -1,0 +1,26 @@
+[
+    {
+        "EventId": 1802,
+        "EventBodyName": "Budget Public Policy",
+        "EventDate": "2025-01-14T00:00:00",
+        "EventTime": "2:30 PM",
+        "EventLocation": null,
+        "EventAgendaFile": "https://legistar1.granicus.com/Mecklenburg/meetings/2025/1/1802_A_Budget_Public_Policy_25-01-14_Meeting_Agenda.pdf",
+        "EventMinutesFile": null,
+        "EventVideoPath": null,
+        "EventComment": "REVISED AGENDA\r\nCharlotte-Mecklenburg Government Center - Room 267",
+        "EventInSiteURL": "https://mecklenburg.legistar.com/MeetingDetail.aspx?LEGID=1802&GID=194&G=9CAF76CE-14E5-4AB9-8178-ECFA61E02FDA"
+    },
+    {
+        "EventId": 1895,
+        "EventBodyName": "Board of Commissioners",
+        "EventDate": "2026-04-07T00:00:00",
+        "EventTime": "5:00 PM",
+        "EventLocation": null,
+        "EventAgendaFile": "https://legistar1.granicus.com/Mecklenburg/meetings/2026/4/1895_A_Board_of_Commissioners_26-04-07_Meeting_Agenda.pdf",
+        "EventMinutesFile": null,
+        "EventVideoPath": null,
+        "EventComment": "REVISED AGENDA",
+        "EventInSiteURL": "https://mecklenburg.legistar.com/MeetingDetail.aspx?LEGID=1895&GID=194&G=9CAF76CE-14E5-4AB9-8178-ECFA61E02FDA"
+    }
+]
