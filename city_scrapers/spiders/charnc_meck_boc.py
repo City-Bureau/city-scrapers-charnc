@@ -19,17 +19,6 @@ from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 
 
-class _HtmlStripper(HTMLParser):
-    """Minimal HTML-to-text stripper used by _parse_description."""
-
-    def __init__(self):
-        super().__init__()
-        self.chunks = []
-
-    def handle_data(self, data):
-        self.chunks.append(data)
-
-
 class CharncMeckBocSpider(CityScrapersSpider):
     name = "charnc_meck_boc"
     agency = "Mecklenburg County"
@@ -38,6 +27,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
         "https://calendar.mecknc.gov/jsonapi/node/event"
         "?page%5Boffset%5D=0&page%5Blimit%5D={limit}"
     )
+    primary_url = "https://calendar.mecknc.gov/"
     legistar_url = "https://mecklenburg.legistar.com/Calendar.aspx"
     legistar_api = "https://webapi.legistar.com/v1/mecklenburg/events"
     legistar_page_size = 1000
@@ -180,7 +170,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
             if not title or self._is_non_meeting(title):
                 continue
             start = self._parse_dt(attrs, "value")
-            if not start:
+            if not start or start.year < self.since_year:
                 continue
             end = self._parse_dt(attrs, "end_value")
             all_day = self._is_all_day(start, end)
@@ -203,7 +193,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
                 time_notes="",
                 location=self._parse_location(attrs),
                 links=links,
-                source=attrs.get("absolute_url") or self.legistar_url,
+                source=attrs.get("absolute_url") or self.primary_url,
             )
             self._finalize_meeting(meeting, raw_title)
             if meeting["id"] in self._seen_ids:
@@ -256,6 +246,15 @@ class CharncMeckBocSpider(CityScrapersSpider):
         """Combine field_date_time_description (plain text) and field_details.value
         (HTML) into a single plain-text description string, matching what appears
         after the Time / Add to Calendar section on the event detail page."""
+
+        class _Stripper(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.chunks = []
+
+            def handle_data(self, data):
+                self.chunks.append(data)
+
         parts = []
         schedule_note = (attrs.get("field_date_time_description") or "").strip()
         if schedule_note:
@@ -263,7 +262,7 @@ class CharncMeckBocSpider(CityScrapersSpider):
 
         html = (attrs.get("field_details") or {}).get("value") or ""
         if html:
-            stripper = _HtmlStripper()
+            stripper = _Stripper()
             stripper.feed(html)
             stripper.close()
             body = " ".join(c.strip() for c in stripper.chunks if c.strip())
@@ -330,10 +329,13 @@ class CharncMeckBocSpider(CityScrapersSpider):
         """Normalize location names by fixing typos and standardizing formats."""
         if not name:
             return name
-        name = name.replace("Freedom Dive", "Freedom Drive")
-        name = name.replace("600v E. 4th St", "600 E. 4th St")
-        name = name.replace("600 E. 4st", "600 E. 4th St")
-        name = name.replace("Govenment Center", "Government Center")
+        for old, new in {
+            "Freedom Dive": "Freedom Drive",
+            "600v E. 4th St": "600 E. 4th St",
+            "600 E. 4st": "600 E. 4th St",
+            "Govenment Center": "Government Center",
+        }.items():
+            name = name.replace(old, new)
         name = self._dupe_charlotte_re.sub(", Charlotte", name)
         name = self._nc_trail_re.sub(", NC", name)
         return name.strip(" ,")

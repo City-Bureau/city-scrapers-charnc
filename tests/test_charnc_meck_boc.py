@@ -355,10 +355,11 @@ def test_since_year_is_2022():
     assert s.since_year == 2022
 
 
-def test_old_calendar_events_included():
-    """Calendar events before since_year must NOT be filtered.
+def test_old_calendar_events_excluded():
+    """Calendar events before since_year must be filtered out.
 
-    No year limit applies to the primary calendar source.
+    Applying the same since_year check to both sources prevents pre-2022
+    calendar events from being yielded with empty links[].
     """
     with freeze_time("2026-04-09"):
         s = CharncMeckBocSpider()
@@ -391,9 +392,7 @@ def test_old_calendar_events_included():
         body=old_body,
     )
     items = list(s.parse(response))
-    assert len(items) == 1
-    assert items[0]["title"] == "Old Board Meeting"
-    assert items[0]["start"].year == 2021
+    assert len(items) == 0
 
 
 def test_old_legistar_events_excluded():
@@ -425,8 +424,8 @@ def test_old_legistar_events_excluded():
     assert s.legistar_events == []
 
 
-def test_source_falls_back_to_legistar_url():
-    """When absolute_url is absent, source must be the Legistar calendar URL."""
+def test_source_falls_back_to_primary_url():
+    """When absolute_url is absent, source must be the primary calendar URL."""
     with freeze_time("2026-04-09"):
         s = CharncMeckBocSpider()
     body = json.dumps(
@@ -459,7 +458,7 @@ def test_source_falls_back_to_legistar_url():
     )
     items = list(s.parse(response))
     assert len(items) == 1
-    assert items[0]["source"] == s.legistar_url
+    assert items[0]["source"] == s.primary_url
 
 
 # ---------------------------------------------------------------------------
