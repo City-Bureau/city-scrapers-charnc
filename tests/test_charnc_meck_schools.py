@@ -17,11 +17,9 @@ def spider():
 
 
 @pytest.fixture
-def calendar_items(spider):
-    # Simulate what _parse_boarddocs_list would set before calendar requests run.
-    from datetime import date as date_type
-
-    spider.last_boarddocs_date = date_type(2026, 4, 17)
+def calendar_items(spider, meetings_response):
+    # meetings_response fixture already calls _parse_boarddocs_list which sets
+    # spider.last_boarddocs_date from the test data. No need to hardcode it.
     response = file_response(
         join(TEST_DIR, "files", "charnc_meck_schools_calendar.html"),
         url="https://www.cmsk12.org/fs/elements/236115?is_draft=false&cal_date=2026-04-01&is_load_more=true&page_id=29911&parent_id=236115",  # noqa
@@ -71,7 +69,8 @@ def test_boarddocs_list_sets_last_date_dynamically(
     """last_boarddocs_date is the max date among *filtered* BoardDocs records."""
     from datetime import date as date_type
 
-    # Fixture max numberdate within the filtered window is 20260417.
+    # Max numberdate in charnc_meck_schools_meetings.json within the filtered
+    # window is 20260417. If you update the test JSON, update this assertion.
     assert spider.last_boarddocs_date == date_type(2026, 4, 17)
 
 
