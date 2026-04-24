@@ -24,7 +24,7 @@ def calendar_items(spider):
     spider.last_boarddocs_date = date_type(2026, 4, 17)
     response = file_response(
         join(TEST_DIR, "files", "charnc_meck_schools_calendar.html"),
-        url="https://www.cmsk12.org/fs/elements/241856?is_draft=false&cal_date=2026-04-01&is_load_more=true&page_id=29911&parent_id=241856",  # noqa
+        url="https://www.cmsk12.org/fs/elements/236115?is_draft=false&cal_date=2026-04-01&is_load_more=true&page_id=29911&parent_id=236115",  # noqa
     )
     with freeze_time("2026-04-18"):
         return list(spider._parse_calendar(response))
