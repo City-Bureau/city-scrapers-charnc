@@ -28,17 +28,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     # Finalsite calendar API - element 236115 provides full event details
     calendar_api_base_url = "https://www.cmsk12.org/fs/elements/236115"
     calendar_public_url = "https://www.cmsk12.org/calendar"
+    calendar_page_id = "29911"
+    calendar_parent_id = "236115"
 
     # Charlotte-Mecklenburg Government Center address
     cmgc_address = "600 East 4th Street Charlotte, NC 28202"
-    calendar_api_params = {
-        "is_draft": "false",
-        "cal_date": "{cal_date}",  # Format: YYYY-MM-DD
-        "is_load_more": "true",
-        "page_id": "29911",
-        "parent_id": "236115",
-        "_": "{cache_buster}",
-    }
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
@@ -113,11 +107,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
             # Build URL from base URL and parameters
             params = [
-                f"is_draft={self.calendar_api_params['is_draft']}",
+                "is_draft=false",
                 f"cal_date={cal_date}",
-                f"is_load_more={self.calendar_api_params['is_load_more']}",
-                f"page_id={self.calendar_api_params['page_id']}",
-                f"parent_id={self.calendar_api_params['parent_id']}",
+                "is_load_more=true",
+                f"page_id={self.calendar_page_id}",
+                f"parent_id={self.calendar_parent_id}",
                 f"_={cache_buster}",
             ]
             calendar_api_url = f"{self.calendar_api_base_url}?{'&'.join(params)}"
@@ -527,7 +521,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     f"occur_id={occur_id}",
                     "show_ath_event=false",
                     "show_event=true",
-                    f"is_draft={self.calendar_api_params['is_draft']}",
+                    "is_draft=false",
                     f"_={cache_buster}",
                 ]
                 detail_url = f"{self.calendar_api_base_url}?{'&'.join(params)}"
