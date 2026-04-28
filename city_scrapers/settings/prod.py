@@ -27,7 +27,7 @@ FEED_EXPORTERS = {
 FEED_FORMAT = "jsonlines"
 
 FEED_STORAGES = {
-    "azure": "city_scrapers_core.azure_storage.AzureBlobFeedStorage",
+    "azure": "city_scrapers_core.extensions.AzureBlobFeedStorage",
 }
 
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME")
