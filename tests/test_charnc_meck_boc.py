@@ -43,9 +43,7 @@ _BUDGET_AGENDA = (
     "https://legistar1.granicus.com/Mecklenburg/meetings/2025/1"
     "/1802_A_Budget_Public_Policy_25-01-14_Meeting_Agenda.pdf"
 )
-_PLANNING_URL = (
-    "https://mecklenburg.legistar.com/MeetingDetail.aspx?LEGID=2100&GID=194"
-)
+_PLANNING_URL = "https://mecklenburg.legistar.com/MeetingDetail.aspx?LEGID=2100&GID=194"
 _PLANNING_AGENDA = (
     "https://legistar1.granicus.com/Mecklenburg/meetings/2026/5"
     "/2100_A_Planning_Commission_26-05-11_Meeting_Agenda.pdf"
@@ -131,9 +129,7 @@ _TEST_EVENTS = [
         "Meeting Date": "6/1/2021",
         "Meeting Time": "5:00 PM",
         "Meeting Location": "",
-        "iCalendar": {
-            "url": "https://mecklenburg.legistar.com/View.ashx?M=IC&ID=100"
-        },
+        "iCalendar": {"url": "https://mecklenburg.legistar.com/View.ashx?M=IC&ID=100"},
     },
     # 7. Duplicate of event 1 — same title+date → same id → deduplicated
     {
@@ -333,9 +329,7 @@ def test_location():
 
 def test_links():
     assert parsed_items[0]["links"] == []
-    assert parsed_items[1]["links"] == [
-        {"href": _BUDGET_AGENDA, "title": "Agenda"}
-    ]
+    assert parsed_items[1]["links"] == [{"href": _BUDGET_AGENDA, "title": "Agenda"}]
     assert parsed_items[2]["links"] == [
         {"href": _PLANNING_AGENDA, "title": "Agenda"},
         {"href": _PLANNING_MINUTES, "title": "Minutes"},

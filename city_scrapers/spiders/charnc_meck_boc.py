@@ -148,9 +148,7 @@ class CharncMeckBocSpider(LegistarSpider):
         headers = []
         for header in events_table.css("th[class^='rgHeader']"):
             header_text = (
-                " ".join(header.css("*::text").extract())
-                .replace("&nbsp;", " ")
-                .strip()
+                " ".join(header.css("*::text").extract()).replace("&nbsp;", " ").strip()
             )
             header_inputs = header.css("input")
             if header_text:
@@ -175,9 +173,7 @@ class CharncMeckBocSpider(LegistarSpider):
                         link_el = field.css("a")[0]
                         if "onclick" in link_el.attrib and link_el.attrib[
                             "onclick"
-                        ].startswith(
-                            ("radopen('", "window.open", "OpenTelerikWindow")
-                        ):
+                        ].startswith(("radopen('", "window.open", "OpenTelerikWindow")):
                             url = response.urljoin(
                                 link_el.attrib["onclick"].split("'")[1]
                             )
@@ -199,11 +195,7 @@ class CharncMeckBocSpider(LegistarSpider):
                 name_val = data.get("Name")
                 ical_val = data.get("iCalendar")
                 dedup_url = (
-                    (
-                        detail_val.get("url")
-                        if isinstance(detail_val, dict)
-                        else None
-                    )
+                    (detail_val.get("url") if isinstance(detail_val, dict) else None)
                     or (name_val.get("url") if isinstance(name_val, dict) else None)
                     or (ical_val.get("url") if isinstance(ical_val, dict) else None)
                 )
