@@ -1,7 +1,6 @@
 import re
 from collections import defaultdict
 from datetime import datetime
-from html.parser import HTMLParser
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -203,8 +202,8 @@ class CharncMeckBocSpider(LegistarSpider):
                     continue
                 self._scraped_urls.add(dedup_url)
                 events.append(dict(data))
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug("Skipping malformed Legistar row: %s", e)
 
         return events
 
@@ -383,14 +382,11 @@ class CharncMeckBocSpider(LegistarSpider):
             parts.append(schedule_note)
         html = (attrs.get("field_details") or {}).get("value") or ""
         if html:
-            chunks = []
-
-            class _Stripper(HTMLParser):
-                def handle_data(self, data):
-                    chunks.append(data)
-
-            _Stripper().feed(html)
-            body = " ".join(c.strip() for c in chunks if c.strip())
+            body = " ".join(
+                t.strip()
+                for t in scrapy.Selector(text=html).xpath("//text()").getall()
+                if t.strip()
+            )
             if body:
                 parts.append(body)
         return " ".join(parts)
