@@ -18,7 +18,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from scrapy.http import TextResponse
 from city_scrapers_core.constants import (
     ADVISORY_COMMITTEE,
     BOARD,
@@ -30,6 +29,7 @@ from city_scrapers_core.constants import (
     TENTATIVE,
 )
 from freezegun import freeze_time
+from scrapy.http import TextResponse
 
 from city_scrapers.spiders.charnc_meck_boc import CharncMeckBocSpider
 
