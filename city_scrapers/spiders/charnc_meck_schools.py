@@ -18,6 +18,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
     years_back = 1
     months_ahead = 3
 
+    boarddocs_headers = {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "origin": "https://go.boarddocs.com",
+        "referer": "https://go.boarddocs.com/nc/cmsnc/Board.nsf/Public",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    }
+
     boarddocs_api_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeetingsList?open&0.{random_digit}"  # noqa
     boarddocs_detail_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeeting?open&0.{random_digit}"  # noqa
     boarddocs_agenda_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetAgenda?open&0.{random_digit}"  # noqa
@@ -54,6 +61,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             url=self.boarddocs_api_url.format(random_digit=random_digit),
             method="POST",
             body=f"current_committee_id={self.boarddocs_committee_id}",
+            headers=self.boarddocs_headers,
             callback=self._parse_boarddocs_list,
             meta={"source": "boarddocs"},
         )
@@ -89,6 +97,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     f"current_committee_id={self.boarddocs_committee_id}"
                     f"&id={meeting_id}"
                 ),
+                headers=self.boarddocs_headers,
                 meta={"meeting_id": meeting_id},
                 callback=self._parse_boarddocs_detail,
             )
@@ -169,6 +178,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             url=self.boarddocs_agenda_url.format(random_digit=random_digit),
             method="POST",
             body=f"current_committee_id={self.boarddocs_committee_id}&id={meeting_id}",
+            headers=self.boarddocs_headers,
             meta={
                 "raw_title": raw_title,
                 "meeting_date": meeting_date,
