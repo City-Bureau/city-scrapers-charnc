@@ -22,7 +22,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         "accept": "application/json, text/javascript, */*; q=0.01",
         "origin": "https://go.boarddocs.com",
         "referer": "https://go.boarddocs.com/nc/cmsnc/Board.nsf/Public",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",  # noqa
     }
 
     boarddocs_api_url = "https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeetingsList?open&0.{random_digit}"  # noqa
