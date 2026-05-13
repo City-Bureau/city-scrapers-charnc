@@ -21,7 +21,7 @@ from city_scrapers_core.spiders import LegistarSpider
 
 class CharncMeckBocSpider(LegistarSpider):
     name = "charnc_meck_boc"
-    agency = "Mecklenburg County"
+    agency = "Mecklenburg County Board of County Commissioners"
     timezone = "America/New_York"
     start_urls = ["https://mecklenburg.legistar.com/Calendar.aspx"]
 
