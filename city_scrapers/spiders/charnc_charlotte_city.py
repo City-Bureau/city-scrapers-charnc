@@ -57,7 +57,7 @@ spider_configs = [
         "agency": "Charlotte Advisory Board Meetings",
         "category_label": "Advisory Board",
         "classification": BOARD,
-        "legistar_bodies": [],
+        "legistar_bodies": ["Zoning Committee Work Session"],
     },
     {
         "class_name": "CharlotteMajorEventsSpider",
