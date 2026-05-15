@@ -123,9 +123,11 @@ def test_source(parsed_items):
 def test_links(parsed_items):
     links = parsed_items[0]["links"]
     assert len(links) == 1
-    assert links[0]["title"] == "Agenda"
-    assert "AGENDA123" in links[0]["href"]
-    assert not any(lnk["title"] == "Agenda Item" for lnk in links)
+    assert links[0]["title"] == "Meeting Details"
+    assert (
+        links[0]["href"]
+        == "https://go.boarddocs.com/nc/cmsnc/Board.nsf/goto?open&id=DSNPR265CF98"
+    )
 
 
 def test_classification(parsed_items):
