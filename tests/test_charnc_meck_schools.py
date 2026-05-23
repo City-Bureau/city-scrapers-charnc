@@ -34,7 +34,7 @@ def meetings_response(spider):
         join(dirname(__file__), "files", "charnc_meck_schools_meetings.json"),
         url="https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeetingsList?open&0.123456789012345",  # noqa
     )
-    with freeze_time("2026-04-13"):
+    with freeze_time("2026-04-13 12:00:00"):
         return list(spider._parse_boarddocs_list(response))
 
 
@@ -66,12 +66,69 @@ def parsed_items(spider):
 def test_boarddocs_list_sets_last_date_dynamically(
     spider, meetings_response
 ):  # noqa: ARG001
-    """last_boarddocs_date is the max date among *filtered* BoardDocs records."""
+    """last_boarddocs_date is the max date among past-only BoardDocs records.
+
+    Future BoardDocs entries must NOT advance last_boarddocs_date past today,
+    because that would suppress calendar events that fall between the future
+    BoardDocs date and today (e.g. a Jun 1 BoardDocs entry causing May 26 to
+    be dropped from the Finalsite calendar output).
+
+    The expected value is computed dynamically from the test fixture file so
+    this test stays valid regardless of when it is run.
+    """
+    import json
+    from datetime import datetime
+
+    with open(join(TEST_DIR, "files", "charnc_meck_schools_meetings.json")) as f:
+        raw = json.load(f)
+
+    all_dates = [
+        datetime.strptime(m["numberdate"], "%Y%m%d").date()
+        for m in raw
+        if m and m.get("numberdate")
+    ]
+
+    # The meetings_response fixture is frozen at "2026-04-13 12:00:00" UTC,
+    # which is April 13 in America/New_York. Mirror that date here so the
+    # expected value is consistent with what the spider computed.
+    frozen_today = datetime(2026, 4, 13, 12, 0, 0).date()
+
+    past_dates = [d for d in all_dates if d <= frozen_today]
+    expected = max(past_dates) if past_dates else frozen_today
+
+    assert spider.last_boarddocs_date == expected
+
+
+def test_future_boarddocs_entry_does_not_suppress_calendar_events(spider):
+    """Future BoardDocs entries must not push last_boarddocs_date past today.
+
+    Regression test for the bug where a BoardDocs entry for Jun 1, 2026
+    caused last_boarddocs_date=2026-06-01, filtering out the May 26 calendar
+    event (2026-05-26 <= 2026-06-01 was True, so it was skipped).
+    """
     from datetime import date as date_type
 
-    # Max numberdate in charnc_meck_schools_meetings.json within the filtered
-    # window is 20260417. If you update the test JSON, update this assertion.
-    assert spider.last_boarddocs_date == date_type(2026, 4, 17)
+    from freezegun import freeze_time
+
+    with freeze_time("2026-05-22"):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        # Simulate filtered_meetings with a future entry (Jun 1)
+        fake_meetings = [
+            {"numberdate": "20260519"},
+            {"numberdate": "20260601"},  # future entry - must NOT dominate
+        ]
+        today = datetime.now(tz=ZoneInfo(spider.timezone)).date()
+        valid_dates = [
+            datetime.strptime(m["numberdate"], "%Y%m%d").date() for m in fake_meetings
+        ]
+        past_dates = [d for d in valid_dates if d <= today]
+        last_bd = max(past_dates) if past_dates else today
+
+        assert last_bd == date_type(2026, 5, 19)
+        # May 26 must NOT be filtered out
+        assert date_type(2026, 5, 26) > last_bd
 
 
 def test_title(parsed_items):

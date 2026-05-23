@@ -71,21 +71,26 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         # Filter first so that last_boarddocs_date reflects only the meetings
         # actually scraped from BoardDocs (within the date window).  Using the
-        # global max across ALL records would push the cutover far into the
-        # future if BoardDocs has placeholder entries for distant dates, which
-        # would suppress calendar events (e.g. Jun 9, Jun 23) that fall between
-        # the last scraped BoardDocs meeting and those distant placeholder dates.
+        # global max across ALL records (or including future BoardDocs entries)
+        # would push the cutover past today, suppressing calendar events that
+        # fall between the future BoardDocs entry and today (e.g. May 26 gets
+        # dropped when BoardDocs has a Jun 1 placeholder entry).
         filtered_meetings = self._filter_meetings_by_date(all_meetings)
 
+        today = datetime.now(tz=ZoneInfo(self.timezone)).date()
         valid_dates = [
             datetime.strptime(m["numberdate"], "%Y%m%d").date()
             for m in filtered_meetings
             if m and m.get("numberdate")
         ]
-        if valid_dates:
-            self.last_boarddocs_date = max(valid_dates)
+        # Only consider past dates so that future BoardDocs placeholder entries
+        # don't push the cutover forward and suppress calendar events that fall
+        # between the placeholder date and today.
+        past_dates = [d for d in valid_dates if d <= today]
+        if past_dates:
+            self.last_boarddocs_date = max(past_dates)
         else:
-            self.last_boarddocs_date = datetime.now(tz=ZoneInfo(self.timezone)).date()
+            self.last_boarddocs_date = today
 
         for meeting in filtered_meetings:
             meeting_id = meeting.get("unique")
