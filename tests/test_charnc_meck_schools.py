@@ -22,9 +22,9 @@ def calendar_items(spider, meetings_response):
     # spider.last_boarddocs_date from the test data. No need to hardcode it.
     response = file_response(
         join(TEST_DIR, "files", "charnc_meck_schools_calendar.html"),
-        url="https://www.cmsk12.org/fs/elements/236115?is_draft=false&cal_date=2026-04-01&is_load_more=true&page_id=29911&parent_id=236115",  # noqa
+        url="https://www.cmsk12.org/fs/elements/236115?is_draft=false&cal_date=2026-05-01&is_load_more=true&page_id=29911&parent_id=236115",  # noqa
     )
-    with freeze_time("2026-04-18"):
+    with freeze_time("2026-05-22 12:00:00"):
         return list(spider._parse_calendar(response))
 
 
@@ -34,7 +34,7 @@ def meetings_response(spider):
         join(dirname(__file__), "files", "charnc_meck_schools_meetings.json"),
         url="https://go.boarddocs.com/nc/cmsnc/Board.nsf/BD-GetMeetingsList?open&0.123456789012345",  # noqa
     )
-    with freeze_time("2026-04-13 12:00:00"):
+    with freeze_time("2026-05-22 12:00:00"):
         return list(spider._parse_boarddocs_list(response))
 
 
@@ -88,10 +88,10 @@ def test_boarddocs_list_sets_last_date_dynamically(
         if m and m.get("numberdate")
     ]
 
-    # The meetings_response fixture is frozen at "2026-04-13 12:00:00" UTC,
-    # which is April 13 in America/New_York. Mirror that date here so the
+    # The meetings_response fixture is frozen at "2026-05-22 12:00:00" UTC,
+    # which is May 22 in America/New_York. Mirror that date here so the
     # expected value is consistent with what the spider computed.
-    frozen_today = datetime(2026, 4, 13, 12, 0, 0).date()
+    frozen_today = datetime(2026, 5, 22, 12, 0, 0).date()
 
     past_dates = [d for d in all_dates if d <= frozen_today]
     expected = max(past_dates) if past_dates else frozen_today
@@ -129,6 +129,42 @@ def test_future_boarddocs_entry_does_not_suppress_calendar_events(spider):
         assert last_bd == date_type(2026, 5, 19)
         # May 26 must NOT be filtered out
         assert date_type(2026, 5, 26) > last_bd
+
+
+def test_boarddocs_list_skips_future_meetings(meetings_response):
+    """BoardDocs detail requests must only be issued for past/today meetings.
+
+    Future-dated entries must be skipped so they cannot produce duplicate
+    output that also appears from the Finalsite calendar source.
+    This is validated against the fixture data so it stays correct as the
+    fixture is updated over time.
+    """
+    import json
+    from datetime import datetime
+
+    fixture_path = join(dirname(__file__), "files", "charnc_meck_schools_meetings.json")
+    with open(fixture_path) as f:
+        fixture = json.load(f)
+
+    # Build a lookup: unique_id -> date so we can check what each request targets
+    id_to_date = {
+        m["unique"]: datetime.strptime(m["numberdate"], "%Y%m%d").date()
+        for m in fixture
+        if m and m.get("unique") and m.get("numberdate")
+    }
+
+    # The fixture is frozen at 2026-05-22 in meetings_response
+    frozen_today = datetime(2026, 5, 22, 12, 0, 0).date()
+
+    boarddocs_requests = [r for r in meetings_response if hasattr(r, "body") and r.body]
+    for req in boarddocs_requests:
+        body = req.body.decode()
+        for unique_id, meeting_date in id_to_date.items():
+            if f"id={unique_id}" in body:
+                assert meeting_date <= frozen_today, (
+                    f"Future meeting {unique_id} ({meeting_date}) must not "
+                    "generate a BoardDocs detail request"
+                )
 
 
 def test_title(parsed_items):
@@ -206,10 +242,13 @@ def test_all_day(parsed_items):
 
 
 def test_calendar_request_count(calendar_items):
-    """Fixture has CMS Board events from the full date range."""
-    # With full date range scraping, we get more events including
-    # duplicates that will be filtered by seen_ids
-    assert len(calendar_items) >= 3
+    """Only events after last_boarddocs_date (2026-05-19) pass the filter.
+
+    The fixture has Apr 20, Apr 28, May 12, and May 26 events.  With
+    last_boarddocs_date=2026-05-19 (frozen 2026-05-22, Jun 1 entry excluded),
+    only May 26 survives the start.date() > last_bd_date check.
+    """
+    assert len(calendar_items) == 1
 
 
 def test_calendar_requests_are_api_calls(calendar_items):
@@ -222,29 +261,34 @@ def test_calendar_requests_are_api_calls(calendar_items):
         assert "event_data" in req.meta
 
 
-def test_calendar_board_retreat_event_data(calendar_items):
-    """Event data is parsed from grid view; full location comes from detail API."""
+def test_calendar_may26_not_suppressed_by_future_boarddocs_entry(calendar_items):
+    """Regression: May 26 must appear even when BoardDocs has a Jun 1 future entry.
+
+    Before the fix, last_boarddocs_date was set to 2026-06-01 (the Jun 1
+    placeholder in the meetings fixture), which caused May 26 to be filtered
+    out by the `start.date() <= last_bd_date` check.  After the fix,
+    last_boarddocs_date is capped at the max *past* date (2026-05-19), so
+    May 26 correctly passes the filter.
+    """
     ed = calendar_items[0].meta["event_data"]
-    assert ed["title"] == "Special Meeting of the Board"
-    assert ed["time_notes"] == "Board Retreat"
-    # Location is parsed from title in grid view, full details from API call
-    assert ed["start"] == datetime(2026, 4, 20, 8, 0)
-    assert ed["end"] == datetime(2026, 4, 20, 17, 0)
+    assert ed["start"] == datetime(2026, 5, 26, 18, 0)
+    assert ed["title"] == "Regular Meeting of the Board"
+    assert ed["time_notes"] == "Closed Session at 4:00pm"
 
 
-def test_calendar_board_retreat_request_url(calendar_items):
-    """URL for the API request includes occur_id parameter with full timestamp."""
+def test_calendar_may26_request_url(calendar_items):
+    """Request URL for May 26 contains the correct occur_id."""
     url = calendar_items[0].url
-    assert "occur_id=106924861_2026-04-20T12:00:00Z_2026-04-20T21:00:00Z" in url
+    assert "occur_id=106841084_2026-05-26T22:00:00Z_2026-05-27T01:00:00Z" in url
     assert "show_event=true" in url
     assert "is_draft=false" in url
 
 
-def test_calendar_board_retreat_meeting_id(calendar_items):
+def test_calendar_may26_meeting_id(calendar_items):
     ed = calendar_items[0].meta["event_data"]
     assert (
         ed["meeting_id"]
-        == "charnc_meck_schools/202604200800/x/special_meeting_of_the_board"
+        == "charnc_meck_schools/202605261800/x/regular_meeting_of_the_board"
     )
 
 

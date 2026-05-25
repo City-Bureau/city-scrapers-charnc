@@ -93,6 +93,11 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             self.last_boarddocs_date = today
 
         for meeting in filtered_meetings:
+            meeting_date = datetime.strptime(
+                meeting.get("numberdate", "19000101"), "%Y%m%d"
+            ).date()
+            if meeting_date > today:
+                continue
             meeting_id = meeting.get("unique")
             random_digit = random.randint(10**14, 10**15 - 1)
             yield scrapy.Request(
@@ -463,7 +468,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         for event_link in all_event_links:
             try:
-                title_elem = event_link.css("::text").get()
+                title_elem = " ".join((event_link.css("::text").get() or "").split())
                 if not title_elem or title_elem.strip() == "Read More":
                     self.logger.debug("Skipping event with no title or Read More link")
                     continue
@@ -574,6 +579,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
         description = ""
         location = event_data["location"]
+        links = []
 
         try:
             # Extract description from the API response
@@ -587,6 +593,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
                     r"^District Events Calendar\s*", "", description
                 ).strip()
                 description = re.sub(r"^Calendar RSS Feeds\s*", "", description).strip()
+
+            # Extract links from the event body (e.g. YouTube URL)
+            for a in response.css("article a[href]"):
+                href = a.css("::attr(href)").get("").strip()
+                text = " ".join(a.css("::text").getall()).strip()
+                if href and not href.startswith("#"):
+                    links.append({"title": text or href, "href": href})
 
             # Try to get location from the response
             location_text = response.css(".fsLocation::text").get()
@@ -612,6 +625,7 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
             end=event_data["end"],
             time_notes=event_data["time_notes"],
             location=location,
+            links=links,
             source=self.calendar_public_url,
         )
         # Override with pre-calculated status and id from temp_meeting

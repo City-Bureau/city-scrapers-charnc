@@ -1,27 +1,19 @@
 [
   {
-    "unique": "DSWKKL5242E3",
-    "name": "Family & Community Engagement Committee Meeting -- 12:00pm -- CMGC 527/528",
+    "unique": "DU3MJJ5B7BB9",
+    "name": "Family & Community Engagement Committee Meeting -- 3:00pm -- VIRTUALLY",
     "current": "",
     "preliveoak": "",
-    "numberdate": "20260417",
-    "unid": "651638CCEB74AD8B85258DD2005242E3"
+    "numberdate": "20260601",
+    "unid": "DU3MJJ5B7BB9AABBCC85258DD2005001"
   },
   {
-    "unique": "DSGK364FDA69",
-    "name": "Special Meeting of the Board -- Legislative Brunch -- 10:00am -- CMGC Room 267",
-    "current": "1",
+    "unique": "DU6Q3T6762CD",
+    "name": "Board of Education Special Meeting -- 7:00pm -- Charlotte-Mecklenburg Government Center",
+    "current": "0",
     "preliveoak": "",
-    "numberdate": "20260414",
-    "unid": "915A59B4EBEBF6E785258DC4004FDA69"
-  },
-  {
-    "unique": "DSKGN2448C6E",
-    "name": "Regular Board Meeting -- 6:00pm -- (Closed Session at 4:00pm in CMGC CH14 )",
-    "current": "1",
-    "preliveoak": "",
-    "numberdate": "20260414",
-    "unid": "64EB4254D1DBB25F85258DC700448C6E"
+    "numberdate": "20260519",
+    "unid": "DU6Q3T6762CDAABBCC85258DC400519A"
   },
   {
     "unique": "DSNPR265CF98",
@@ -38,13 +30,5 @@
     "preliveoak": "",
     "numberdate": "20260402",
     "unid": "22A2300943BB78D185258DC70057EF3C"
-  },
-  {
-    "unique": "DSGH4W46BC18",
-    "name": "Family & Community Engagement Committee Meeting -- 3:30Pm -- VIRTUALLY",
-    "current": "0",
-    "preliveoak": "",
-    "numberdate": "20260330",
-    "unid": "5541CF1293BD870085258DC40046BC18"
   }
 ]
