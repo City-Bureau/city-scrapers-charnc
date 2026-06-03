@@ -1,0 +1,93 @@
+name: Debug BoardDocs IP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      WEBSHARE_PROXY_URL: ${{ secrets.WEBSHARE_PROXY_URL }}
+    steps:
+      - name: Probe BoardDocs with and without proxy
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import random
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE = "https://go.boarddocs.com/nc/cmsnc/Board.nsf"
+          COMMITTEE_ID = "A4EP6J588C05"
+          HEADERS = {
+              "accept": "application/json, text/javascript, */*; q=0.01",
+              "origin": "https://go.boarddocs.com",
+              "referer": f"{BASE}/Public",
+              "user-agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/147.0.0.0 Safari/537.36"
+              ),
+              "content-type": "application/x-www-form-urlencoded",
+          }
+          PROXY = os.environ.get("WEBSHARE_PROXY_URL") or ""
+
+          def build_opener(use_proxy):
+              if use_proxy and PROXY:
+                  handler = urllib.request.ProxyHandler({
+                      "http": PROXY,
+                      "https": PROXY,
+                  })
+                  return urllib.request.build_opener(handler)
+              return urllib.request.build_opener()
+
+          def post(opener, url, body):
+              req = urllib.request.Request(
+                  url, data=body.encode(), headers=HEADERS, method="POST"
+              )
+              try:
+                  with opener.open(req, timeout=20) as r:
+                      return r.status, r.read()
+              except urllib.error.HTTPError as e:
+                  return e.code, b""
+              except Exception as e:
+                  print(f"  EXC: {type(e).__name__}: {e}")
+                  return 0, b""
+
+          # Get a real meeting id once (direct, no proxy)
+          opener = build_opener(False)
+          rd = random.randint(10**14, 10**15 - 1)
+          list_url = f"{BASE}/BD-GetMeetingsList?open&0.{rd}"
+          status, body = post(opener, list_url, f"current_committee_id={COMMITTEE_ID}")
+          print(f"List endpoint (direct): {status}")
+          data = json.loads(body) if body else []
+          meeting_id = next(m["unique"] for m in data if m and m.get("unique"))
+          print(f"Using meeting_id={meeting_id}")
+
+          def probe(label, use_proxy, n=30, delay=1.0):
+              print(f"\n=== {label} (n={n}, proxy={'yes' if use_proxy else 'no'}) ===")
+              opener = build_opener(use_proxy)
+              counts = {"200": 0, "403": 0, "other": 0}
+              for i in range(n):
+                  rd = random.randint(10**14, 10**15 - 1)
+                  url = f"{BASE}/BD-GetMeeting?open&0.{rd}"
+                  status, _ = post(
+                      opener, url,
+                      f"current_committee_id={COMMITTEE_ID}&id={meeting_id}",
+                  )
+                  key = str(status) if status in (200, 403) else "other"
+                  counts[key] += 1
+                  if i % 5 == 0:
+                      print(f"  [{i+1}/{n}] status={status}")
+                  time.sleep(delay)
+              print(f"RESULT {label}: 200={counts['200']}  403={counts['403']}  other={counts['other']}")
+              return counts
+
+          direct = probe("DIRECT", use_proxy=False)
+          if PROXY:
+              proxied = probe("VIA WEBSHARE PROXY", use_proxy=True)
+          else:
+              print("\n(no WEBSHARE_PROXY_URL secret set — skipping proxy test)")
+          PY
