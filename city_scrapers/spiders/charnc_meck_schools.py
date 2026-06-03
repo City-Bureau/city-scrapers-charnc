@@ -43,8 +43,13 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
-        "DOWNLOAD_DELAY": 1,
+        "DOWNLOAD_DELAY": 2,
         "FEED_EXPORT_ENCODING": "utf-8",
+        # BoardDocs returns 403 on bursts; serialize requests per domain
+        # and retry 403s so meetings aren't silently dropped.
+        "CONCURRENT_REQUESTS_PER_DOMAIN": 1,
+        "RETRY_HTTP_CODES": [403, 408, 429, 500, 502, 503, 504, 522, 524],
+        "RETRY_TIMES": 3,
     }
 
     def __init__(self, *args, **kwargs):
