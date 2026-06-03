@@ -2,6 +2,8 @@ name: Debug BoardDocs IP
 
 on:
   workflow_dispatch:
+  push:
+    branches: [debug-boarddocs]
 
 jobs:
   probe:
