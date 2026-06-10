@@ -7,8 +7,18 @@ import scrapy
 from city_scrapers_core.constants import BOARD
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from curl_cffi import requests as cffi_requests
 from dateutil.parser import parse as dt_parse
 from dateutil.relativedelta import relativedelta
+from scrapy.http import HtmlResponse
+
+# BoardDocs (`go.boarddocs.com`) blocks plain Python requests with HTTP 403
+# (server-side TLS/JA3 fingerprint check). curl-cffi with
+# `impersonate="chrome131"` matches Chrome's real TLS handshake and the
+# endpoint returns the live JSON/HTML meeting data.
+BOARDDOCS_IMPERSONATE = "chrome131"
+BOARDDOCS_TIMEOUT = 30
+BOARDDOCS_DOMAIN = "go.boarddocs.com"
 
 
 class CharncMeckSchoolsSpider(CityScrapersSpider):
@@ -59,16 +69,85 @@ class CharncMeckSchoolsSpider(CityScrapersSpider):
         self.last_boarddocs_date = None
 
     def start_requests(self):
-        # Scrape BoardDocs first so we can determine the cutover date before
-        # issuing any Finalsite calendar requests.
-        random_digit = random.randint(10**14, 10**15 - 1)
+        # Scrapy's `start_requests` only accepts Requests — yielding Items
+        # here crashes the scheduler with `AttributeError: dont_filter`.
+        # Kick off with a benign Scrapy GET; the real BoardDocs flow
+        # (which produces Items via curl-cffi) runs inside `_kickoff`.
         yield scrapy.Request(
+            url=self.calendar_public_url,
+            callback=self._kickoff,
+            dont_filter=True,
+        )
+
+    def _kickoff(self, response):
+        # Scrape BoardDocs first so we can determine the cutover date before
+        # issuing any Finalsite calendar requests. The BoardDocs domain
+        # rejects Scrapy's default TLS fingerprint (HTTP 403), so we route
+        # all `go.boarddocs.com` POSTs through curl-cffi (chrome131) and
+        # only let the Finalsite calendar GETs pass through to Scrapy.
+        random_digit = random.randint(10**14, 10**15 - 1)
+        list_request = scrapy.Request(
             url=self.boarddocs_api_url.format(random_digit=random_digit),
             method="POST",
             body=f"current_committee_id={self.boarddocs_committee_id}",
             headers=self.boarddocs_headers,
             callback=self._parse_boarddocs_list,
             meta={"source": "boarddocs"},
+        )
+        yield from self._dispatch(list_request)
+
+    def _dispatch(self, request):
+        """Route a scrapy.Request: BoardDocs goes through curl-cffi, every-
+        thing else (Finalsite calendar) falls through to Scrapy."""
+        if BOARDDOCS_DOMAIN in request.url:
+            response = self._boarddocs_fetch(request)
+            if response is None:
+                return
+            callback = request.callback or self.parse
+            yield from self._consume(callback(response))
+        else:
+            yield request
+
+    def _consume(self, generator):
+        """Recursively post-process anything a callback yields: BoardDocs
+        Requests get fetched via curl-cffi, other Requests + items pass
+        through unchanged."""
+        for item in generator:
+            if isinstance(item, scrapy.Request):
+                yield from self._dispatch(item)
+            else:
+                yield item
+
+    def _boarddocs_fetch(self, request):
+        """Synchronously execute a BoardDocs Request through curl-cffi.
+
+        Returns a Scrapy ``HtmlResponse`` with the original ``Request``
+        attached so callbacks see ``response.meta`` / ``response.url`` the
+        way they would under the normal downloader. Returns ``None`` on
+        non-200 or exception (logged and skipped)."""
+        body = request.body
+        if isinstance(body, bytes):
+            body = body.decode("utf-8", errors="replace")
+        self.logger.info("boarddocs → %s", request.url)
+        try:
+            r = cffi_requests.request(
+                request.method or "GET",
+                request.url,
+                data=body or None,
+                headers=dict(self.boarddocs_headers),
+                impersonate=BOARDDOCS_IMPERSONATE,
+                timeout=BOARDDOCS_TIMEOUT,
+            )
+        except Exception as e:
+            self.logger.warning("boarddocs error for %s: %s", request.url, e)
+            return None
+        self.logger.info(
+            "boarddocs ← %d %s (%d bytes)", r.status_code, request.url, len(r.content)
+        )
+        if r.status_code != 200:
+            return None
+        return HtmlResponse(
+            url=request.url, body=r.content, encoding="utf-8", request=request
         )
 
     def _parse_boarddocs_list(self, response):
